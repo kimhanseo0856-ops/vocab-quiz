@@ -123,6 +123,11 @@ details.panel[open]>summary{margin-bottom:10px}
           <button class="btn" id="resetBtn" type="button">학습 기록 초기화</button>
           <input type="file" id="importFile" accept=".json,application/json" hidden>
         </div>
+        <div class="row" id="sourceRow" hidden>
+          <span class="hint" id="sourceInfo"></span>
+          <button class="btn" id="syncBtn" type="button">지금 업데이트</button>
+          <button class="btn" id="unlinkBtn" type="button">자동 업데이트 끊기</button>
+        </div>
         <p class="hint" id="settingsMsg"></p>
       </div>
     </details>
@@ -130,7 +135,7 @@ details.panel[open]>summary{margin-bottom:10px}
 
   <section class="card">
     <h2 id="wordsTitle">단어장</h2>
-    <p class="hint">칸 5개는 외운 정도예요. 맞힐 때마다 한 칸씩 올라가고 다시 나오는 간격이 1일, 3일, 7일, 14일로 늘어나요. 틀리면 첫 칸으로 돌아가요. 단어를 누르면 뜻을 고칠 수 있어요.</p>
+    <p class="hint">칸 5개는 외운 정도예요. 맞힐 때마다 한 칸씩 올라가고 다시 나오는 간격이 1일, 3일, 7일, 14일로 늘어나요. 틀리면 첫 칸으로 돌아가요. 단어를 누르면 뜻을 고칠 수 있지만, 자동 업데이트를 연결했다면 Gist의 단어장을 고쳐야 다음에도 유지돼요.</p>
     <div class="words" id="words"></div>
   </section>
 </div>
@@ -389,7 +394,12 @@ async function judge(q, alts){
 
 async function runSession(){
   const queue = buildQueue();
-  if (!queue.length){ showFeedback("info", "퀴즈에 낼 단어가 없어요. 단어장에서 뜻이 채워진 단어를 확인해주세요."); return; }
+  if (!queue.length){
+    showFeedback("info", vocab.items.length
+      ? "퀴즈에 낼 단어가 없어요. 단어장에서 뜻을 채우거나 '퀴즈에 내기'를 켜주세요."
+      : "아직 단어장이 없어요. 단어장 링크를 열거나, 설정 → 단어장 가져오기로 vocab.json 파일을 넣어주세요.");
+    return;
+  }
   session = {queue, i: 0, right: 0, wrong: new Set(), cancelled: false, requeued: new Set()};
   setRunning(true); await keepAwake(true);
   await speak(`단어 퀴즈를 시작할게요. 오늘은 ${queue.length}문제예요.`);
@@ -501,9 +511,83 @@ function bindSettings(){
 }
 function setVocab(v){ vocab = v; $("src").textContent = v.title || ""; renderWords(); }
 
+/* "#import=<base64url of raw-deflated vocab JSON>" links load a vocab without uploading it anywhere:
+   the part after # never leaves the phone. */
+async function importFromHash(){
+  if (location.hash.startsWith("#source=")) return connectSource(decodeURIComponent(location.hash.slice(8)));
+  if (!location.hash.startsWith("#import=")) return false;
+  try{
+    const b64 = location.hash.slice(8).replace(/-/g, "+").replace(/_/g, "/");
+    const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+    const v = JSON.parse(await new Response(stream).text());
+    if (!Array.isArray(v.items)) throw new Error("items 목록이 없어요");
+    store.set("vq-vocab", v); setVocab(v);
+    showFeedback("ok", `단어장을 가져왔어요. 단어 ${v.items.length}개 중 ${activeItems().length}개를 퀴즈에 내요.`);
+    return true;
+  }catch(e){
+    showFeedback("bad", "링크에서 단어장을 읽지 못했어요. 링크가 중간에 잘리지 않았는지 확인해주세요.");
+    return false;
+  }finally{
+    history.replaceState(null, "", location.pathname + location.search);
+  }
+}
+
+/* Auto-updating word list: a secret gist's raw URL, kept only on this phone (never in the public page source).
+   Every open fetches the latest list; progress is keyed by word id, so it survives updates. */
+const SOURCE_KEY = "vq-source";
+const RAW_GIST = /^https:\/\/gist\.githubusercontent\.com\/[^/]+\/[0-9a-f]+\/raw\//i;
+async function fetchSource(url){
+  const r = await fetch(url + (url.includes("?") ? "&" : "?") + "t=" + Date.now(), {cache: "no-store"});
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const v = await r.json();
+  if (!Array.isArray(v.items)) throw new Error("items 목록이 없어요");
+  return v;
+}
+async function syncSource(quiet){
+  const src = store.get(SOURCE_KEY, null);
+  if (!src) return false;
+  try{
+    const v = await fetchSource(src.url);
+    store.set("vq-vocab", v); setVocab(v);
+    src.updatedAt = Date.now(); store.set(SOURCE_KEY, src);
+    if (!quiet) showFeedback("ok", `최신 단어장을 받았어요. ${activeItems().length}개를 퀴즈에 내요.`);
+  }catch(e){
+    const saved = store.get("vq-vocab", null);
+    if (saved) setVocab(saved);
+    showFeedback("info", "인터넷 연결이 없어서 마지막으로 받은 단어장으로 진행해요.");
+  }
+  renderSource();
+  return true;
+}
+async function connectSource(url){
+  history.replaceState(null, "", location.pathname + location.search);
+  if (!RAW_GIST.test(url)){ showFeedback("bad", "연결 링크의 주소가 Gist의 Raw 주소가 아니에요. 연결 링크를 다시 만들어주세요."); return false; }
+  try{
+    const v = await fetchSource(url);
+    store.set(SOURCE_KEY, {url, updatedAt: Date.now()});
+    store.set("vq-vocab", v); setVocab(v);
+    showFeedback("ok", `자동 업데이트를 연결했어요. 앞으로 열 때마다 최신 단어장을 받아와요. 지금 ${activeItems().length}개를 퀴즈에 내요.`);
+  }catch(e){
+    showFeedback("bad", `Gist에서 단어장을 받지 못했어요 (${e.message}). 인터넷 연결과 Gist 주소를 확인해주세요.`);
+  }
+  renderSource();
+  return true;
+}
+function renderSource(){
+  const src = store.get(SOURCE_KEY, null);
+  $("sourceRow").hidden = !src;
+  if (src) $("sourceInfo").textContent = `자동 업데이트 연결됨 · 마지막으로 받은 시각 ${new Date(src.updatedAt).toLocaleString("ko-KR", {month:"numeric", day:"numeric", hour:"2-digit", minute:"2-digit"})}`;
+}
+
 async function init(){
   if (!Rec) $("speechWarn").hidden = false;
   bindSettings();
+  $("syncBtn").onclick = () => syncSource(false);
+  $("unlinkBtn").onclick = () => { try{ localStorage.removeItem(SOURCE_KEY); }catch(e){} renderSource(); $("settingsMsg").textContent = "자동 업데이트를 끊었어요. 지금 단어장은 그대로 남아 있어요."; };
+  renderSource();
+  if (await importFromHash()) return;
+  if (await syncSource(true)) return;
   const saved = store.get("vq-vocab", null);
   if (saved && Array.isArray(saved.items)) return setVocab(saved);
   try{
@@ -511,10 +595,11 @@ async function init(){
     setVocab(await r.json());
   }catch(e){
     setVocab({title: "단어장 없음", items: []});
-    showFeedback("info", "단어장을 불러오지 못했어요. 설정에서 단어장 .json 파일을 가져와주세요.");
+    showFeedback("info", "아직 단어장이 없어요. 단어장 링크를 열거나, 설정 → 단어장 가져오기로 vocab.json 파일을 넣어주세요.");
   }
 }
 init();
+window.addEventListener("hashchange", importFromHash);   // link opened while the page is already showing
 </script>
 </body>
 </html>

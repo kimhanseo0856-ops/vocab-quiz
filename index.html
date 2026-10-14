@@ -1,0 +1,520 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#14171c">
+<title>출근길 단어 퀴즈</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: one-thumb column — status + question card on top, one large start/stop control, then word list and settings */
+:root{
+  --bg:#f4f5f7; --surface:#ffffff; --line:#dfe3e8; --fg:#161a20; --muted:#5f6875;
+  --accent:#2563eb; --accent-fg:#ffffff; --ok:#16803c; --ok-soft:#e3f4e9; --bad:#c2410c; --bad-soft:#fdeee4;
+  --listen:#7c3aed; --listen-soft:#efe8fd; --warn:#a16207; --warn-soft:#fbf2d9;
+  --f:"IBM Plex Sans KR",system-ui,-apple-system,"Noto Sans KR","Malgun Gothic",sans-serif;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#14171c; --surface:#1d2128; --line:#2d333d; --fg:#e9edf2; --muted:#9aa4b2;
+  --accent:#5b8cff; --accent-fg:#0d1117; --ok:#4ade80; --ok-soft:#173323; --bad:#fb923c; --bad-soft:#3a2416;
+  --listen:#b794ff; --listen-soft:#2b2340; --warn:#facc15; --warn-soft:#352d12; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#14171c; --surface:#1d2128; --line:#2d333d; --fg:#e9edf2; --muted:#9aa4b2;
+  --accent:#5b8cff; --accent-fg:#0d1117; --ok:#4ade80; --ok-soft:#173323; --bad:#fb923c; --bad-soft:#3a2416;
+  --listen:#b794ff; --listen-soft:#2b2340; --warn:#facc15; --warn-soft:#352d12; color-scheme:dark}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--fg);font:15px/1.55 var(--f);padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+.wrap{max-width:640px;margin:0 auto;padding-inline:16px;padding-block:18px 48px;display:grid;gap:16px}
+header{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap}
+h1{font-size:22px;margin:0;font-weight:700;text-wrap:balance}
+.src{font-size:12px;color:var(--muted)}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:18px;display:grid;gap:12px;min-width:0}
+.status{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;letter-spacing:.02em}
+.pill{padding:3px 10px;border-radius:999px;background:var(--bg);color:var(--muted)}
+.pill.speaking{background:var(--accent);color:var(--accent-fg)}
+.pill.listening{background:var(--listen-soft);color:var(--listen)}
+.pill.ok{background:var(--ok-soft);color:var(--ok)}
+.pill.bad{background:var(--bad-soft);color:var(--bad)}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--listen);display:none}
+.listening+.dot{display:inline-block}
+@media (prefers-reduced-motion:no-preference){.listening+.dot{animation:pulse 1s infinite}}
+@keyframes pulse{50%{opacity:.25}}
+.count{margin-left:auto;color:var(--muted);font-variant-numeric:tabular-nums;font-weight:500}
+.question{font-size:22px;line-height:1.45;font-weight:600;min-height:3em;text-wrap:pretty;overflow-wrap:anywhere}
+.heard{font-size:15px;color:var(--muted);min-height:1.5em;overflow-wrap:anywhere}
+.heard b{color:var(--fg);font-weight:600}
+.feedback{font-size:15px;padding:10px 12px;border-radius:10px;display:none;overflow-wrap:anywhere}
+.feedback.ok{display:block;background:var(--ok-soft);color:var(--fg);border-left:4px solid var(--ok)}
+.feedback.bad{display:block;background:var(--bad-soft);color:var(--fg);border-left:4px solid var(--bad)}
+.feedback.info{display:block;background:var(--bg);color:var(--fg)}
+button{font:inherit;cursor:pointer}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.big{width:100%;border:0;border-radius:14px;padding:18px;font-size:20px;font-weight:700;background:var(--accent);color:var(--accent-fg)}
+.big.stop{background:var(--bad);color:var(--accent-fg)}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+.btn{border:1px solid var(--line);background:var(--surface);color:var(--fg);border-radius:10px;padding:9px 14px;font-size:14px}
+.btn:disabled{opacity:.45;cursor:default}
+.type{display:flex;gap:8px}
+.type input{flex:1;min-width:0;font:inherit;padding:9px 12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--fg)}
+.hint{font-size:13px;color:var(--muted);margin:0}
+.warn{font-size:13px;padding:10px 12px;border-radius:10px;background:var(--warn-soft);color:var(--fg);border-left:4px solid var(--warn)}
+h2{font-size:16px;margin:0}
+.words{display:grid;gap:8px}
+.word{border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.word summary{list-style:none;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 10px;padding:10px 12px;cursor:pointer}
+.word summary::-webkit-details-marker{display:none}
+.word .t{font-weight:600}
+.word .m{grid-column:1/-1;color:var(--muted);font-size:13px;overflow-wrap:anywhere}
+.boxes{display:flex;gap:3px;align-items:center}
+.boxes i{width:8px;height:8px;border-radius:2px;background:var(--line)}
+.boxes i.on{background:var(--ok)}
+.tag{font-size:11px;padding:1px 7px;border-radius:4px;background:var(--warn-soft);color:var(--warn);font-weight:600;margin-left:6px;vertical-align:1px}
+.tag.off{background:var(--bg);color:var(--muted)}
+.edit{display:grid;gap:8px;padding:0 12px 12px}
+.edit textarea{font:inherit;font-size:14px;width:100%;min-height:64px;padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--fg);resize:vertical}
+.edit label{display:flex;gap:6px;align-items:center;font-size:13px}
+.extra{font-size:13px;color:var(--muted);margin:0}
+.settings{display:grid;gap:10px}
+.settings label{display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:14px}
+.settings select{font:inherit;padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--fg)}
+details.panel>summary{cursor:pointer;font-weight:600;padding:2px 0}
+details.panel[open]>summary{margin-bottom:10px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>출근길 단어 퀴즈</h1>
+    <span class="src" id="src"></span>
+  </header>
+
+  <section class="card" aria-live="polite">
+    <div class="status"><span class="pill" id="pill">대기 중</span><span class="dot"></span><span class="count" id="score"></span></div>
+    <div class="question" id="question">시작을 누르면 문제를 읽어드려요. 삐 소리가 나면 답을 말해주세요.</div>
+    <div class="heard" id="heard"></div>
+    <div class="feedback" id="feedback"></div>
+    <button class="big" id="startBtn">퀴즈 시작</button>
+    <div class="row">
+      <button class="btn" id="repeatBtn" disabled>다시 듣기</button>
+      <button class="btn" id="passBtn" disabled>패스</button>
+    </div>
+    <form class="type" id="typeForm">
+      <input id="typeInput" autocomplete="off" placeholder="말 대신 입력해서 답하기 (테스트용)">
+      <button class="btn" type="submit">답하기</button>
+    </form>
+    <p class="hint">음성 명령: <b>패스</b>, <b>다시</b>, <b>힌트</b>, <b>그만</b>. 8초 동안 말이 없으면 정답을 알려주고 넘어가요.</p>
+    <div class="warn" id="speechWarn" hidden>이 브라우저는 음성 인식을 지원하지 않아요. 안드로이드 크롬에서 열어주세요. 지금은 입력창으로 답할 수 있어요.</div>
+  </section>
+
+  <section class="card">
+    <details class="panel">
+      <summary>설정</summary>
+      <div class="settings">
+        <label>한 번에 풀 문제 수 <select id="setCount"><option>5</option><option>10</option><option selected>15</option><option>20</option><option>30</option></select></label>
+        <label>읽기 속도 <select id="setRate"><option value="0.85">느리게</option><option value="1" selected>보통</option><option value="1.15">빠르게</option></select></label>
+        <label>뜻 듣고 단어 맞히기 <input type="checkbox" id="setT1" checked></label>
+        <label>단어 듣고 뜻 말하기 <input type="checkbox" id="setT2" checked></label>
+        <label>항목 나열하기 <input type="checkbox" id="setT3" checked></label>
+        <div class="row">
+          <button class="btn" id="importBtn" type="button">단어장 가져오기 (.json)</button>
+          <button class="btn" id="exportBtn" type="button">단어장 복사</button>
+          <button class="btn" id="resetBtn" type="button">학습 기록 초기화</button>
+          <input type="file" id="importFile" accept=".json,application/json" hidden>
+        </div>
+        <p class="hint" id="settingsMsg"></p>
+      </div>
+    </details>
+  </section>
+
+  <section class="card">
+    <h2 id="wordsTitle">단어장</h2>
+    <p class="hint">칸 5개는 외운 정도예요. 맞힐 때마다 한 칸씩 올라가고 다시 나오는 간격이 1일, 3일, 7일, 14일로 늘어나요. 틀리면 첫 칸으로 돌아가요. 단어를 누르면 뜻을 고칠 수 있어요.</p>
+    <div class="words" id="words"></div>
+  </section>
+</div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const store = {
+  get(k, d){ try{ const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; }catch(e){ return d; } },
+  set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
+};
+const INTERVALS = [0, 1, 3, 7, 14, 30];          // days until next review, by box 0..5
+const DAY = 86400000;
+const today = () => Math.floor(Date.now() / DAY);
+
+let vocab = null;                                 // {title, items}
+let progress = store.get("vq-progress", {});      // id -> {box, due, seen, right}
+let settings = Object.assign({count:15, rate:1, t1:true, t2:true, t3:true}, store.get("vq-settings", {}));
+
+/* ---------- Korean text matching ---------- */
+const CHO = "ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ";
+const JUNG = ["ㅏ","ㅐ","ㅑ","ㅒ","ㅓ","ㅔ","ㅕ","ㅖ","ㅗ","ㅘ","ㅙ","ㅚ","ㅛ","ㅜ","ㅝ","ㅞ","ㅟ","ㅠ","ㅡ","ㅢ","ㅣ"];
+const JONG = ["","ㄱ","ㄲ","ㄳ","ㄴ","ㄵ","ㄶ","ㄷ","ㄹ","ㄺ","ㄻ","ㄼ","ㄽ","ㄾ","ㄿ","ㅀ","ㅁ","ㅂ","ㅄ","ㅅ","ㅆ","ㅇ","ㅈ","ㅊ","ㅋ","ㅌ","ㅍ","ㅎ"];
+const norm = s => (s || "").toLowerCase().replace(/[^가-힣a-z0-9&]/g, "");
+function jamo(s){
+  let out = "";
+  for (const ch of norm(s)){
+    const c = ch.charCodeAt(0) - 0xAC00;
+    out += (c >= 0 && c < 11172) ? CHO[Math.floor(c / 588)] + JUNG[Math.floor((c % 588) / 28)] + JONG[c % 28] : ch;
+  }
+  return out;
+}
+function lev(a, b){
+  const m = a.length, n = b.length; if (!m) return n; if (!n) return m;
+  let prev = Array.from({length:n + 1}, (_, j) => j), cur = new Array(n + 1);
+  for (let i = 1; i <= m; i++){
+    cur[0] = i;
+    for (let j = 1; j <= n; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    [prev, cur] = [cur, prev];
+  }
+  return prev[n];
+}
+/* similarity of a spoken phrase to an expected word, tolerant of extra words around it ("정답은 레거시요") */
+function sim(heard, expected){
+  const T = jamo(heard), A = jamo(expected);
+  if (!T || !A) return 0;
+  if (T.includes(A)) return 1;
+  let best = 1 - lev(T, A) / Math.max(T.length, A.length);
+  for (let w = A.length - 2; w <= A.length + 2; w++){
+    if (w < 2 || w > T.length) continue;
+    for (let i = 0; i + w <= T.length; i++) best = Math.max(best, 0.97 * (1 - lev(T.slice(i, i + w), A) / Math.max(w, A.length)));
+  }
+  return best;
+}
+const itemScore = (alts, it) => Math.max(0, ...alts.flatMap(a => [it.term, it.say, ...(it.aliases || [])].map(x => sim(a, x))));
+
+function gradeTerm(alts, target){
+  const pool = vocab.items.filter(i => i.meaning || i.id === target.id);
+  let mine = itemScore(alts, target), other = 0;
+  for (const it of pool) if (it.id !== target.id) other = Math.max(other, itemScore(alts, it));
+  return {ok: mine >= 0.8 && mine >= other, score: mine};
+}
+function gradeList(alts, list){
+  const found = [], missed = [];
+  list.items.forEach(group => {
+    const s = Math.max(0, ...alts.flatMap(a => group.map(g => sim(a, g))));
+    (s >= 0.75 ? found : missed).push(group[0]);
+  });
+  return {ok: missed.length === 0, found, missed};
+}
+const STOP = new Set(["것","거","하는","있는","같은","있게","해주는","이것","또는","그리고","하는것","누가","건지"]);
+function keywordRatio(alts, meaning){
+  const keys = meaning.split(/[\s,.·()]+/).map(norm).filter(w => w.length >= 2 && !STOP.has(w));
+  if (!keys.length) return 0;
+  const said = alts.join(" ");
+  const hit = keys.filter(k => sim(said, k.length > 3 ? k.slice(0, k.length - 1) : k) >= 0.8).length;
+  return hit / keys.length;
+}
+const COMMANDS = [
+  ["stop", /그만|종료|끝내|멈춰/], ["repeat", /다시|한번더|한번 더|뭐라고/], ["hint", /힌트/], ["pass", /패스|모르겠|몰라|넘어가|스킵/]
+];
+function command(alts){
+  const first = norm(alts[0] || "");
+  if (!first || first.length > 8) return null;          // long answers are answers, not commands
+  for (const [name, re] of COMMANDS) if (re.test(first)) return name;
+  return null;
+}
+const YES = /^(응|어|네|예|넵|웅)$|맞았|맞아|맞췄|맞혔|정답|오케이|ok/, NO = /틀렸|틀려|아니|몰랐|못/;
+
+/* picks 은/는, 을/를 … by whether the last syllable has a final consonant (English words: by last letter's sound) */
+function josa(word, withFinal, without){
+  const last = (word || "").trim().slice(-1), c = last.charCodeAt(0) - 0xAC00;
+  if (c >= 0 && c < 11172) return c % 28 ? withFinal : without;
+  return /[lmnr]$/i.test(last) ? withFinal : without;
+}
+
+/* ---------- speech ---------- */
+const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
+let koVoice = null;
+function pickVoice(){
+  const vs = speechSynthesis.getVoices().filter(v => /^ko/i.test(v.lang));
+  koVoice = vs.find(v => /google/i.test(v.name)) || vs[0] || null;
+}
+if ("speechSynthesis" in window){ pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
+
+let session = null;           // {queue, i, right, total, wrongIds, cancelled}
+let rec = null, typedResolve = null;
+
+function speak(text){
+  return new Promise(res => {
+    if (!("speechSynthesis" in window) || session?.cancelled){ res(); return; }
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = "ko-KR"; if (koVoice) u.voice = koVoice; u.rate = settings.rate;
+    let done = false; const fin = () => { if (!done){ done = true; clearTimeout(t); res(); } };
+    const t = setTimeout(fin, 2500 + text.length * 220 / settings.rate);   // Android sometimes never fires onend
+    u.onend = fin; u.onerror = fin;
+    speechSynthesis.speak(u);
+  });
+}
+let actx = null;
+function beep(freq = 880, ms = 160){
+  try{
+    actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.frequency.value = freq; g.gain.value = 0.15;
+    o.connect(g); g.connect(actx.destination); o.start(); o.stop(actx.currentTime + ms / 1000);
+  }catch(e){}
+  return new Promise(r => setTimeout(r, ms + 120));
+}
+/* resolves {alts:[...]} — empty when nothing was heard */
+let micDenied = false;        // once the mic is refused, answers come from the text box for the rest of the page load
+function listen(timeout = 8000){
+  return new Promise(res => {
+    let done = false, alts = [];
+    const fin = () => { if (done) return; done = true; clearTimeout(t); typedResolve = null; try{ rec && rec.abort(); }catch(e){} rec = null; res({alts}); };
+    typedResolve = text => { alts = [text]; fin(); };
+    let t = setTimeout(fin, Rec && !micDenied ? timeout : 60000);
+    if (!Rec || micDenied) return;
+    rec = new Rec();
+    rec.lang = "ko-KR"; rec.interimResults = true; rec.maxAlternatives = 5; rec.continuous = false;
+    rec.onresult = e => {
+      const r = e.results[e.results.length - 1];
+      $("heard").innerHTML = "들은 말: <b></b>"; $("heard").querySelector("b").textContent = r[0].transcript;
+      if (r.isFinal){ alts = Array.from(r).map(a => a.transcript).filter(Boolean); fin(); }
+    };
+    rec.onerror = ev => {
+      if (ev.error === "not-allowed" || ev.error === "service-not-allowed"){
+        micDenied = true; rec = null;
+        $("speechWarn").textContent = "마이크를 쓸 수 없어서 입력창으로 답하는 모드로 바꿨어요. 음성으로 답하려면 주소창 왼쪽 아이콘에서 마이크를 허용하고 새로고침해주세요.";
+        $("speechWarn").hidden = false;
+        clearTimeout(t); t = setTimeout(fin, 60000);   // keep waiting for a typed answer
+        return;
+      }
+      fin();
+    };
+    rec.onend = () => { if (!micDenied) fin(); };
+    try{ rec.start(); }catch(e){ fin(); }
+  });
+}
+
+/* ---------- UI helpers ---------- */
+function setPill(kind, text){ const p = $("pill"); p.className = "pill " + (kind || ""); p.textContent = text; }
+function showFeedback(kind, text){ const f = $("feedback"); f.className = "feedback " + kind; f.textContent = text; }
+function updateScore(){ $("score").textContent = session ? `${Math.min(session.i + 1, session.queue.length)} / ${session.queue.length} · 정답 ${session.right}` : ""; }
+
+/* ---------- session ---------- */
+function activeItems(){ return vocab.items.filter(i => i.active !== false && i.meaning); }
+function buildQueue(){
+  const d = today();
+  const items = activeItems().map(it => ({it, p: progress[it.id] || {box:0, due:0}}));
+  items.sort((a, b) => ((a.p.due > d) - (b.p.due > d)) || (a.p.box - b.p.box) || (Math.random() - 0.5));
+  return items.slice(0, settings.count).map(({it, p}) => ({it, type: pickType(it, p.box)}));
+}
+function pickType(it, box){
+  const opts = [];
+  if (settings.t3 && it.list) opts.push("list");
+  if (settings.t1) opts.push("def2term");
+  if (settings.t2 && box >= 2) opts.push("term2def");
+  if (!opts.length) return settings.t2 ? "term2def" : (it.list ? "list" : "def2term");
+  return opts[Math.floor(Math.random() * opts.length)];
+}
+const questionText = q => q.type === "list" ? q.it.list.prompt : q.type === "term2def" ? `${q.it.say}. 무슨 뜻일까요?` : `${q.it.meaning}. 이걸 뭐라고 할까요?`;
+const displayText = q => q.type === "list" ? q.it.list.prompt : q.type === "term2def" ? `“${q.it.term}” 무슨 뜻일까요?` : `${q.it.meaning}. 이걸 뭐라고 할까요?`;
+
+function record(it, ok){
+  const p = progress[it.id] || {box:0, due:0, seen:0, right:0};
+  p.seen++; if (ok){ p.right++; p.box = Math.min(5, p.box + 1); } else p.box = 0;
+  p.due = today() + INTERVALS[p.box];
+  progress[it.id] = p; store.set("vq-progress", progress);
+}
+
+async function askOne(q){
+  let silent = 0;
+  for (;;){
+    if (session.cancelled) return "stop";
+    setPill("speaking", "문제 읽는 중"); $("question").textContent = displayText(q); $("heard").textContent = ""; $("feedback").className = "feedback";
+    await speak(questionText(q));
+    if (session.cancelled) return "stop";
+    await beep();
+    setPill("listening", "듣는 중");
+    const {alts} = await listen();
+    if (session.cancelled) return "stop";
+    const cmd = command(alts);
+    if (cmd === "stop") return "stop";
+    if (cmd === "repeat") continue;
+    if (cmd === "hint"){ await speak(hintFor(q)); continue; }
+    if (!alts.length && !cmd){
+      if (++silent < 2){ setPill("", "못 들었어요"); await speak("못 들었어요. 한 번 더 말해주세요."); continue; }
+    }
+    return await judge(q, cmd === "pass" || !alts.length ? null : alts);
+  }
+}
+function hintFor(q){
+  if (q.type === "list") return `힌트예요. 첫 번째는 ${q.it.list.items[0][0].slice(0, 1)}로 시작해요.`;
+  if (q.type === "term2def") return `힌트예요. ${q.it.meaning.split(/[.,]/)[0].slice(0, 6)}로 시작해요.`;
+  return `힌트예요. ${[...q.it.say].length}글자이고, ${q.it.say.slice(0, 1)}로 시작해요.`;
+}
+async function judge(q, alts){
+  const it = q.it; let ok = false, say = "", show = "";
+  if (!alts){
+    say = q.type === "list" ? `정답은 ${it.list.items.map(g => g[0]).join(", ")}.` : q.type === "term2def" ? `정답은, ${it.meaning}.` : `정답은, ${it.say}.`;
+    show = "넘어갔어요. 정답: " + (q.type === "list" ? it.list.items.map(g => g[0]).join(", ") : q.type === "term2def" ? it.meaning : it.term);
+  } else if (q.type === "def2term"){
+    ok = gradeTerm(alts, it).ok;
+    say = ok ? `정답이에요! ${it.say}.` : `아쉬워요. 정답은, ${it.say}.`;
+    show = ok ? `정답: ${it.term}` : `정답은 ${it.term}`;
+  } else if (q.type === "list"){
+    const r = gradeList(alts, it.list); ok = r.ok;
+    const f = r.found.join(", "), m = r.missed.join(", ");
+    say = ok ? "세 가지 모두 맞았어요!" : (r.found.length ? `${f}${josa(f, "은", "는")} 맞았고, ${m}${josa(m, "을", "를")} 놓쳤어요.` : `정답은 ${it.list.items.map(g => g[0]).join(", ")}.`);
+    show = say;
+  } else {
+    if (keywordRatio(alts, it.meaning) >= 0.5){ ok = true; say = `맞아요! ${it.meaning}.`; show = `정답: ${it.meaning}`; }
+    else {
+      setPill("speaking", "직접 채점");
+      showFeedback("info", `정답: ${it.meaning}`);
+      await speak(`정답은, ${it.meaning}. 맞혔으면 맞았어, 틀렸으면 틀렸어라고 말해주세요.`);
+      await beep(660);
+      setPill("listening", "듣는 중");
+      const ans = norm((await listen(6000)).alts[0] || "");
+      ok = YES.test(ans) && !NO.test(ans);
+      say = ok ? "좋아요!" : "다음에 다시 나와요."; show = (ok ? "맞힌 걸로 기록했어요. " : "틀린 걸로 기록했어요. ") + `정답: ${it.meaning}`;
+    }
+  }
+  if (ok && it.extra && q.type !== "term2def") say += " " + it.extra;
+  if (!ok && alts) $("heard").textContent = `들은 말: ${alts[0]}`;
+  setPill(ok ? "ok" : "bad", ok ? "정답" : alts ? "오답" : "패스");
+  showFeedback(ok ? "ok" : "bad", show);
+  record(it, ok);
+  if (ok) session.right++; else session.wrong.add(it.term);
+  updateScore(); renderWords();
+  await speak(say);
+  return ok ? "ok" : "wrong";
+}
+
+async function runSession(){
+  const queue = buildQueue();
+  if (!queue.length){ showFeedback("info", "퀴즈에 낼 단어가 없어요. 단어장에서 뜻이 채워진 단어를 확인해주세요."); return; }
+  session = {queue, i: 0, right: 0, wrong: new Set(), cancelled: false, requeued: new Set()};
+  setRunning(true); await keepAwake(true);
+  await speak(`단어 퀴즈를 시작할게요. 오늘은 ${queue.length}문제예요.`);
+  for (session.i = 0; session.i < session.queue.length; session.i++){
+    updateScore();
+    const q = session.queue[session.i];
+    const r = await askOne(q);
+    if (r === "stop") break;
+    if (r === "wrong" && !session.requeued.has(q.it.id) && session.queue.length < settings.count + 5){
+      session.requeued.add(q.it.id);                       // ask a missed word once more at the end
+      session.queue.push({it: q.it, type: "def2term"});
+    }
+  }
+  const total = Math.min(session.i, session.queue.length), wrong = [...session.wrong];
+  const w = wrong.slice(0, 5).join(", ");
+  const summary = `${total}문제 중 ${session.right}개 맞혔어요.` + (wrong.length ? ` 틀린 단어는 ${w}${josa(w, "이고", "고")}, 내일 다시 나와요.` : " 모두 잘 기억하고 있어요!");
+  const cancelled = session.cancelled;
+  setPill("", "끝"); $("question").textContent = "오늘 퀴즈 끝!"; showFeedback("info", summary);
+  if (!cancelled) await speak(summary + " 수고했어요.");
+  session = null; setRunning(false); updateScore(); keepAwake(false);
+}
+function stopSession(){
+  if (!session) return;
+  session.cancelled = true;
+  try{ speechSynthesis.cancel(); }catch(e){}
+  try{ rec && rec.abort(); }catch(e){}
+  if (typedResolve) typedResolve("");
+}
+function setRunning(on){
+  $("startBtn").textContent = on ? "그만하기" : "퀴즈 시작";
+  $("startBtn").classList.toggle("stop", on);
+  $("repeatBtn").disabled = $("passBtn").disabled = !on;
+}
+let wakeLock = null;
+async function keepAwake(on){
+  try{
+    if (on && "wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen");
+    else if (!on && wakeLock){ await wakeLock.release(); wakeLock = null; }
+  }catch(e){}
+}
+document.addEventListener("visibilitychange", () => { if (session && document.visibilityState === "visible") keepAwake(true); });
+
+/* manual controls (testing / passenger use) */
+$("startBtn").onclick = () => session ? stopSession() : runSession();
+$("repeatBtn").onclick = () => { if (typedResolve) typedResolve("다시"); else speechSynthesis.cancel(); };
+$("passBtn").onclick = () => { if (typedResolve) typedResolve("패스"); };
+$("typeForm").onsubmit = e => { e.preventDefault(); const v = $("typeInput").value.trim(); if (v && typedResolve){ typedResolve(v); $("typeInput").value = ""; } };
+
+/* ---------- word list ---------- */
+function renderWords(){
+  $("wordsTitle").textContent = `단어장 · ${activeItems().length}개 출제 중`;
+  const box = $("words"); box.innerHTML = "";
+  vocab.items.forEach(it => {
+    const p = progress[it.id] || {box:0};
+    const d = document.createElement("details"); d.className = "word";
+    d.innerHTML = `<summary><span class="t"></span><span class="boxes">${[1,2,3,4,5].map(i => `<i class="${i <= p.box ? "on" : ""}"></i>`).join("")}</span><span class="m"></span></summary>
+      <div class="edit"><p class="extra"></p><textarea aria-label="뜻"></textarea>
+      <label><input type="checkbox" class="chk"> 확인 필요</label>
+      <label><input type="checkbox" class="act"> 퀴즈에 내기</label>
+      <div class="row"><button class="btn save" type="button">저장</button></div></div>`;
+    const t = d.querySelector(".t"); t.textContent = it.term;
+    if (it.check){ const s = document.createElement("span"); s.className = "tag"; s.textContent = "확인 필요"; t.after(s); }
+    if (it.active === false || !it.meaning){ const s = document.createElement("span"); s.className = "tag off"; s.textContent = it.meaning ? "제외" : "뜻 없음"; t.after(s); }
+    d.querySelector(".m").textContent = it.meaning || "뜻을 채워주세요";
+    d.querySelector(".extra").textContent = it.extra || "";
+    d.querySelector("textarea").value = it.meaning || "";
+    d.querySelector(".chk").checked = !!it.check;
+    d.querySelector(".act").checked = it.active !== false;
+    d.querySelector(".save").onclick = () => {
+      it.meaning = d.querySelector("textarea").value.trim();
+      it.check = d.querySelector(".chk").checked;
+      it.active = d.querySelector(".act").checked;
+      store.set("vq-vocab", vocab); renderWords();
+    };
+    box.appendChild(d);
+  });
+}
+
+/* ---------- settings / import ---------- */
+function bindSettings(){
+  $("setCount").value = String(settings.count); $("setRate").value = String(settings.rate);
+  $("setT1").checked = settings.t1; $("setT2").checked = settings.t2; $("setT3").checked = settings.t3;
+  const save = () => {
+    settings = {count: +$("setCount").value, rate: +$("setRate").value, t1: $("setT1").checked, t2: $("setT2").checked, t3: $("setT3").checked};
+    store.set("vq-settings", settings);
+  };
+  ["setCount","setRate","setT1","setT2","setT3"].forEach(id => $(id).onchange = save);
+  $("importBtn").onclick = () => $("importFile").click();
+  $("importFile").onchange = async e => {
+    const f = e.target.files[0]; if (!f) return;
+    try{
+      const v = JSON.parse(await f.text());
+      if (!Array.isArray(v.items)) throw new Error("items 목록이 없어요");
+      setVocab(v); store.set("vq-vocab", v); $("settingsMsg").textContent = `단어 ${v.items.length}개를 가져왔어요. 학습 기록은 그대로 유지돼요.`;
+    }catch(err){ $("settingsMsg").textContent = "가져오지 못했어요: " + err.message + ". 단어장 형식의 .json 파일인지 확인해주세요."; }
+    e.target.value = "";
+  };
+  $("exportBtn").onclick = async () => {
+    const text = JSON.stringify(vocab, null, 2);
+    try{ await navigator.clipboard.writeText(text); $("settingsMsg").textContent = "단어장을 클립보드에 복사했어요."; }
+    catch(e){ $("settingsMsg").textContent = "복사하지 못했어요. 이 브라우저는 클립보드 쓰기를 막고 있어요."; }
+  };
+  let armed = false;
+  $("resetBtn").onclick = () => {
+    if (!armed){ armed = true; $("resetBtn").textContent = "한 번 더 누르면 초기화"; setTimeout(() => { armed = false; $("resetBtn").textContent = "학습 기록 초기화"; }, 4000); return; }
+    progress = {}; store.set("vq-progress", progress); armed = false;
+    $("resetBtn").textContent = "학습 기록 초기화"; $("settingsMsg").textContent = "학습 기록을 지웠어요."; renderWords();
+  };
+}
+function setVocab(v){ vocab = v; $("src").textContent = v.title || ""; renderWords(); }
+
+async function init(){
+  if (!Rec) $("speechWarn").hidden = false;
+  bindSettings();
+  const saved = store.get("vq-vocab", null);
+  if (saved && Array.isArray(saved.items)) return setVocab(saved);
+  try{
+    const r = await fetch("vocab.json", {cache: "no-store"});
+    setVocab(await r.json());
+  }catch(e){
+    setVocab({title: "단어장 없음", items: []});
+    showFeedback("info", "단어장을 불러오지 못했어요. 설정에서 단어장 .json 파일을 가져와주세요.");
+  }
+}
+init();
+</script>
+</body>
+</html>

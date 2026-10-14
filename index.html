@@ -104,7 +104,7 @@ details.panel[open]>summary{margin-bottom:10px}
       <input id="typeInput" autocomplete="off" placeholder="말 대신 입력해서 답하기 (테스트용)">
       <button class="btn" type="submit">답하기</button>
     </form>
-    <p class="hint">음성 명령: <b>패스</b>, <b>다시</b>, <b>힌트</b>, <b>그만</b>. 8초 동안 말이 없으면 정답을 알려주고 넘어가요.</p>
+    <p class="hint">음성 명령: <b>패스</b>(모르겠어), <b>다시 말해줘</b>(못 들었어), <b>힌트</b>, <b>그만</b>. 8초 동안 말이 없으면 정답을 알려주고 넘어가요.</p>
     <div class="warn" id="speechWarn" hidden>이 브라우저는 음성 인식을 지원하지 않아요. 안드로이드 크롬에서 열어주세요. 지금은 입력창으로 답할 수 있어요.</div>
   </section>
 
@@ -215,11 +215,14 @@ function keywordRatio(alts, meaning){
   return hit / keys.length;
 }
 const COMMANDS = [
-  ["stop", /그만|종료|끝내|멈춰/], ["repeat", /다시|한번더|한번 더|뭐라고/], ["hint", /힌트/], ["pass", /패스|모르겠|몰라|넘어가|스킵/]
+  ["stop", /그만|종료|끝내|멈춰/],
+  // "다시" only counts at the start, so an answer like "데이터를 다시 정렬하는 것" stays an answer
+  ["repeat", /^다시(요|말|읽|해|한번|들려|$)|^(한번더|한번만더|또말해)|다시말|다시읽|뭐라고|못들었|안들려|잘안들|반복/],
+  ["hint", /힌트/], ["pass", /패스|모르겠|몰라|넘어가|스킵/]
 ];
 function command(alts){
   const first = norm(alts[0] || "");
-  if (!first || first.length > 8) return null;          // long answers are answers, not commands
+  if (!first || first.length > 12) return null;         // long answers are answers, not commands
   for (const [name, re] of COMMANDS) if (re.test(first)) return name;
   return null;
 }
@@ -580,7 +583,17 @@ function renderSource(){
   if (src) $("sourceInfo").textContent = `자동 업데이트 연결됨 · 마지막으로 받은 시각 ${new Date(src.updatedAt).toLocaleString("ko-KR", {month:"numeric", day:"numeric", hour:"2-digit", minute:"2-digit"})}`;
 }
 
+/* KakaoTalk's in-app browser keeps its own storage and handles the mic poorly, so hand the page
+   (with its #link payload intact) to the phone's default browser before anything is consumed. */
+function leaveKakao(){
+  if (!/KAKAOTALK/i.test(navigator.userAgent)) return false;
+  showFeedback("info", "카카오톡 안에서 열렸어요. 크롬으로 옮겨서 열게요. 넘어가지 않으면 링크를 길게 눌러 복사한 뒤 크롬 주소창에 붙여넣어 주세요.");
+  location.href = "kakaotalk://web/openExternal?url=" + encodeURIComponent(location.href);
+  return true;
+}
+
 async function init(){
+  if (leaveKakao()) return;
   if (!Rec) $("speechWarn").hidden = false;
   bindSettings();
   $("syncBtn").onclick = () => syncSource(false);

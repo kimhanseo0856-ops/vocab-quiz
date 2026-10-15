@@ -682,8 +682,9 @@ function record(it, ok, q){
 }
 
 async function askOne(q){
-  let silent = 0;
+  let silent = 0, glitches = 0;
   q.hints = 0; q.repeats = 0;
+  const pause = ms => new Promise(r => setTimeout(r, ms));
   for (;;){                                   // read the question (again only when asked: "다시 말해줘")
     if (session.cancelled) return "stop";
     setPill("speaking", "문제 읽는 중"); $("question").textContent = displayText(q); $("heard").textContent = ""; $("feedback").className = "feedback";
@@ -699,8 +700,11 @@ async function askOne(q){
       const cmd = command(alts);
       if (cmd === "stop") return "stop";
       if (cmd === "repeat"){ q.repeats++; break; }
-      if (cmd === "hint"){ q.hints++; await speak(hintFor(q)); continue; }
+      if (cmd === "hint"){ q.hints++; await speak(hintFor(q)); await pause(400); continue; }
       q.pass = cmd === "pass";
+      // An empty result within 1.5 s is the phone's recognizer failing to start (it is often still busy
+      // right after the previous answer or the hint), not the driver being silent: try again quietly.
+      if (!alts.length && !cmd && q.ms < 1500 && glitches++ < 3){ await pause(700); continue; }
       if (!alts.length && !cmd && ++silent < 2) continue;   // no words heard: one more wait, no re-reading
       return await judge(q, cmd === "pass" || !alts.length ? null : alts);
     }
@@ -1126,7 +1130,7 @@ function leaveKakao(){
 /* The app shows the live page, but the phone may keep an old copy for a few minutes. On start and
    whenever the app comes back to the front, compare APP_VERSION with the copy on the server and
    reload once (with a fresh query string so no cache is used) if it changed. */
-const APP_VERSION = "2026-10-15.10";
+const APP_VERSION = "2026-10-16.1";
 async function checkUpdate(){
   if (session || location.protocol !== "https:") return;
   try{

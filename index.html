@@ -110,6 +110,16 @@ details.panel[open]>summary{margin-bottom:10px}
     <div class="warn" id="speechWarn" hidden>이 브라우저는 음성 인식을 지원하지 않아요. 안드로이드 크롬에서 열어주세요. 지금은 입력창으로 답할 수 있어요.</div>
   </section>
 
+  <section class="card" id="photoCard" hidden>
+    <h2>노트 사진 추가</h2>
+    <p class="hint">찍은 사진은 휴대폰의 <b>Documents/VocabQuiz/inbox</b> 폴더에 저장돼요. 집 PC가 켜지면 이 폴더가 PC로 옮겨지고, 글씨를 인식해서 단어장에 추가해요.</p>
+    <div class="row">
+      <button class="btn" id="shootBtn" type="button">노트 촬영</button>
+      <button class="btn" id="pickBtn" type="button">앨범에서 고르기</button>
+    </div>
+    <p class="hint" id="photoMsg"></p>
+  </section>
+
   <section class="card">
     <details class="panel">
       <summary>설정</summary>
@@ -257,6 +267,8 @@ const NATIVE = !!(window.Capacitor && typeof window.Capacitor.registerPlugin ===
 const NativeTTS = NATIVE ? window.Capacitor.registerPlugin("TextToSpeech") : null;
 const NativeSTT = NATIVE ? window.Capacitor.registerPlugin("SpeechRecognition") : null;
 const NativeAwake = NATIVE ? window.Capacitor.registerPlugin("KeepAwake") : null;
+const NativeCamera = NATIVE ? window.Capacitor.registerPlugin("Camera") : null;
+const NativeFS = NATIVE ? window.Capacitor.registerPlugin("Filesystem") : null;
 let nativeMicOk = null;
 async function nativeMic(){
   if (nativeMicOk !== null) return nativeMicOk;
@@ -346,6 +358,41 @@ function listen(timeout = 8000){
     rec.onend = () => { if (!micDenied) fin(); };
     try{ rec.start(); }catch(e){ fin(); }
   });
+}
+
+/* ---------- note photos (app only) ----------
+   Photos go to Documents/VocabQuiz/inbox on the phone. Syncthing copies that folder to the home PC,
+   which reads the handwriting and adds the words to the gist whenever it is switched on. */
+const INBOX = "VocabQuiz/inbox";
+async function inboxCount(){
+  try{ return (await NativeFS.readdir({path: INBOX, directory: "DOCUMENTS"})).files.length; }catch(e){ return 0; }
+}
+async function savePhoto(base64, format){
+  const d = new Date(), pad = n => String(n).padStart(2, "0");
+  const name = `note_${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}_${Math.random().toString(36).slice(2, 6)}.${format === "png" ? "png" : "jpg"}`;
+  await NativeFS.writeFile({path: `${INBOX}/${name}`, data: base64, directory: "DOCUMENTS", recursive: true});
+  return name;
+}
+async function addPhotos(fromCamera){
+  const msg = $("photoMsg");
+  try{
+    try{ await NativeFS.requestPermissions(); }catch(e){}
+    let saved = 0;
+    if (fromCamera){
+      const ph = await NativeCamera.getPhoto({source: "CAMERA", resultType: "base64", quality: 90, correctOrientation: true, saveToGallery: false});
+      await savePhoto(ph.base64String, ph.format); saved = 1;
+    } else {
+      const res = await NativeCamera.pickImages({quality: 90, limit: 0});
+      for (const ph of res.photos){
+        const file = await NativeFS.readFile({path: ph.path});
+        await savePhoto(file.data, ph.format); saved++;
+      }
+    }
+    msg.textContent = `${saved}장을 저장했어요. 처리를 기다리는 사진: ${await inboxCount()}장`;
+  }catch(e){
+    const text = String(e && (e.message || e));
+    msg.textContent = /cancel/i.test(text) ? "사진 추가를 취소했어요." : "사진을 저장하지 못했어요: " + text;
+  }
 }
 
 /* ---------- UI helpers ---------- */
@@ -660,6 +707,12 @@ function leaveKakao(){
 async function init(){
   if (leaveKakao()) return;
   if (!Rec && !NATIVE) $("speechWarn").hidden = false;
+  if (NATIVE){
+    $("photoCard").hidden = false;
+    $("shootBtn").onclick = () => addPhotos(true);
+    $("pickBtn").onclick = () => addPhotos(false);
+    inboxCount().then(n => { if (n) $("photoMsg").textContent = `처리를 기다리는 사진: ${n}장`; });
+  }
   bindSettings();
   $("syncBtn").onclick = () => syncSource(false);
   $("unlinkBtn").onclick = () => { try{ localStorage.removeItem(SOURCE_KEY); }catch(e){} renderSource(); $("settingsMsg").textContent = "자동 업데이트를 끊었어요. 지금 단어장은 그대로 남아 있어요."; };

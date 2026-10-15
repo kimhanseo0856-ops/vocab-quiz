@@ -58,6 +58,7 @@ h1{font-size:22px;margin:0;font-weight:700;text-wrap:balance}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:18px;display:grid;grid-template-columns:minmax(0,1fr);gap:12px;min-width:0}
 .card>*{min-width:0}
 .card[hidden]{display:none}
+html.demo .wrap{max-width:430px}
 .status{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;letter-spacing:.02em}
 .pill{padding:3px 10px;border-radius:999px;background:var(--bg);color:var(--muted)}
 .pill.speaking{background:var(--accent);color:var(--accent-fg)}
@@ -238,6 +239,10 @@ const $ = id => document.getElementById(id);
 /* Demo mode (?demo): a built-in list of 10 general IT/AI terms for showing the app anywhere.
    Nothing is read from or written to this browser's storage, so real progress is never touched. */
 const DEMO = new URLSearchParams(location.search).has("demo");
+if (DEMO){                                         // shown on a presentation PC: dark, phone-sized
+  document.documentElement.dataset.theme = "dark";
+  document.documentElement.classList.add("demo");
+}
 const DEMO_VOCAB = {"title": "체험용 단어장", "items": [{"id": "g-kpi", "term": "KPI", "say": "케이피아이", "aliases": ["KPI", "kpi", "케이 피 아이", "케이피아이"], "meaning": "핵심 성과 지표", "extra": "", "check": false}, {"id": "g-roi", "term": "ROI", "say": "알오아이", "aliases": ["ROI", "roi", "알 오 아이", "알오아이"], "meaning": "투자 대비 수익", "extra": "", "check": false}, {"id": "g-mvp", "term": "MVP", "say": "엠브이피", "aliases": ["MVP", "mvp", "엠 브이 피", "엠브이피", "엠비피"], "meaning": "최소 기능 제품. 핵심 기능만 넣은 첫 버전", "extra": "", "check": false}, {"id": "g-rag", "term": "RAG", "say": "래그", "aliases": ["RAG", "rag", "래그", "랙", "알에이지"], "meaning": "검색한 문서를 함께 넣어 답변을 만드는 방식", "extra": "", "check": false}, {"id": "g-llm", "term": "LLM", "say": "엘엘엠", "aliases": ["LLM", "llm", "엘 엘 엠", "엘엘엠"], "meaning": "대형 언어 모델", "extra": "", "check": false}, {"id": "g-ocr", "term": "OCR", "say": "오씨알", "aliases": ["OCR", "ocr", "오 씨 알", "오씨알"], "meaning": "이미지 속 글자를 텍스트로 바꾸는 기술", "extra": "", "check": false}, {"id": "g-tts", "term": "TTS", "say": "티티에스", "aliases": ["TTS", "tts", "티 티 에스", "티티에스"], "meaning": "글자를 음성으로 바꾸는 기술", "extra": "", "check": false}, {"id": "g-sql", "term": "SQL", "say": "에스큐엘", "aliases": ["SQL", "sql", "시퀄", "에스 큐 엘", "에스큐엘"], "meaning": "데이터베이스에 질문하는 언어", "extra": "", "check": false}, {"id": "n-embedding", "term": "임베딩", "say": "임베딩", "aliases": ["embedding", "엠베딩", "임 베딩", "임베딩"], "meaning": "이미지·도면 데이터를 컴퓨터가 계산할 수 있는 숫자 벡터로 바꾼 것", "extra": "", "check": false}, {"id": "n-chunking", "term": "청킹", "say": "청킹", "aliases": ["chunking", "청 킹", "청크", "청킹"], "meaning": "긴 문서를 작은 덩어리로 쪼개는 작업", "extra": "", "check": false}]};
 const store = DEMO ? {get(k, d){ return d; }, set(){}} : {
   get(k, d){ try{ const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; }catch(e){ return d; } },
@@ -1121,7 +1126,7 @@ function leaveKakao(){
 /* The app shows the live page, but the phone may keep an old copy for a few minutes. On start and
    whenever the app comes back to the front, compare APP_VERSION with the copy on the server and
    reload once (with a fresh query string so no cache is used) if it changed. */
-const APP_VERSION = "2026-10-15.9";
+const APP_VERSION = "2026-10-15.10";
 async function checkUpdate(){
   if (session || location.protocol !== "https:") return;
   try{

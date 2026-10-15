@@ -112,7 +112,8 @@ details.panel[open]>summary{margin-bottom:10px}
     <details class="panel">
       <summary>설정</summary>
       <div class="settings">
-        <label>한 번에 풀 문제 수 <select id="setCount"><option>5</option><option>10</option><option selected>15</option><option>20</option><option>30</option></select></label>
+        <label>한 번에 풀 문제 수 <select id="setCount"><option>10</option><option>20</option><option selected>30</option><option>40</option><option>60</option><option value="999">전부</option></select></label>
+        <label>답 알려준 뒤 쉬는 시간 <select id="setGap"><option value="1.5">짧게 (1.5초)</option><option value="2.5" selected>보통 (2.5초)</option><option value="4">길게 (4초)</option></select></label>
         <label>읽기 속도 <select id="setRate"><option value="0.85">느리게</option><option value="1" selected>보통</option><option value="1.15">빠르게</option></select></label>
         <label>뜻 듣고 단어 맞히기 <input type="checkbox" id="setT1" checked></label>
         <label>단어 듣고 뜻 말하기 <input type="checkbox" id="setT2" checked></label>
@@ -153,7 +154,7 @@ const today = () => Math.floor(Date.now() / DAY);
 
 let vocab = null;                                 // {title, items}
 let progress = store.get("vq-progress", {});      // id -> {box, due, seen, right}
-let settings = Object.assign({count:15, rate:1, t1:true, t2:true, t3:true}, store.get("vq-settings", {}));
+let settings = Object.assign({count:30, rate:1, gap:2.5, t1:true, t2:true, t3:true}, store.get("vq-settings", {}));
 
 /* ---------- Korean text matching ---------- */
 const CHO = "ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ";
@@ -395,6 +396,19 @@ async function judge(q, alts){
   return ok ? "ok" : "wrong";
 }
 
+/* A pause after the answer, then a two-note chime and the question number, so the end of the
+   feedback and the start of the next question can't run together in the driver's ear. */
+async function nextCue(n){
+  setPill("", "다음 문제 준비");
+  for (let t = 0; t < settings.gap * 1000; t += 100){
+    if (session.cancelled) return "stop";
+    await new Promise(r => setTimeout(r, 100));
+  }
+  await beep(660, 90); await beep(990, 140);
+  if (session.cancelled) return "stop";
+  await speak(`${n}번 문제.`);
+}
+
 async function runSession(){
   const queue = buildQueue();
   if (!queue.length){
@@ -406,12 +420,14 @@ async function runSession(){
   session = {queue, i: 0, right: 0, wrong: new Set(), cancelled: false, requeued: new Set()};
   setRunning(true); await keepAwake(true);
   await speak(`단어 퀴즈를 시작할게요. 오늘은 ${queue.length}문제예요.`);
+  const firstLength = queue.length;
   for (session.i = 0; session.i < session.queue.length; session.i++){
     updateScore();
+    if (session.i > 0 && await nextCue(session.i + 1) === "stop") break;
     const q = session.queue[session.i];
     const r = await askOne(q);
     if (r === "stop") break;
-    if (r === "wrong" && !session.requeued.has(q.it.id) && session.queue.length < settings.count + 5){
+    if (r === "wrong" && !session.requeued.has(q.it.id) && session.queue.length < firstLength + 10){
       session.requeued.add(q.it.id);                       // ask a missed word once more at the end
       session.queue.push({it: q.it, type: "def2term"});
     }
@@ -483,13 +499,13 @@ function renderWords(){
 
 /* ---------- settings / import ---------- */
 function bindSettings(){
-  $("setCount").value = String(settings.count); $("setRate").value = String(settings.rate);
+  $("setCount").value = String(settings.count); $("setRate").value = String(settings.rate); $("setGap").value = String(settings.gap);
   $("setT1").checked = settings.t1; $("setT2").checked = settings.t2; $("setT3").checked = settings.t3;
   const save = () => {
-    settings = {count: +$("setCount").value, rate: +$("setRate").value, t1: $("setT1").checked, t2: $("setT2").checked, t3: $("setT3").checked};
+    settings = {count: +$("setCount").value, rate: +$("setRate").value, gap: +$("setGap").value, t1: $("setT1").checked, t2: $("setT2").checked, t3: $("setT3").checked};
     store.set("vq-settings", settings);
   };
-  ["setCount","setRate","setT1","setT2","setT3"].forEach(id => $(id).onchange = save);
+  ["setCount","setRate","setGap","setT1","setT2","setT3"].forEach(id => $(id).onchange = save);
   $("importBtn").onclick = () => $("importFile").click();
   $("importFile").onchange = async e => {
     const f = e.target.files[0]; if (!f) return;

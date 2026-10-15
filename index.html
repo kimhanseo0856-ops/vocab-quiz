@@ -139,6 +139,7 @@ details.panel[open]>summary{margin-bottom:10px}
         <div class="row">
           <button class="btn" id="importBtn" type="button">단어장 가져오기 (.json)</button>
           <button class="btn" id="exportBtn" type="button">단어장 복사</button>
+          <button class="btn" id="recordBtn" type="button">학습 기록 저장</button>
           <button class="btn" id="resetBtn" type="button">학습 기록 초기화</button>
           <input type="file" id="importFile" accept=".json,application/json" hidden>
         </div>
@@ -154,7 +155,7 @@ details.panel[open]>summary{margin-bottom:10px}
 
   <section class="card">
     <h2 id="wordsTitle">단어장</h2>
-    <p class="hint">5일 연속으로 맞히면 일주일 뒤에 한 번, 그것도 맞히면 한 달 뒤에 한 번 더 나오고, 그것까지 맞히면 졸업해요. 중간에 틀리면 매일 단계부터 다시 시작해요. 하루에 여러 번 맞혀도 하루로 쳐요. 단어를 누르면 뜻을 고칠 수 있지만, 자동 업데이트를 연결했다면 Gist의 단어장을 고쳐야 다음에도 유지돼요.</p>
+    <p class="hint">5일 연속으로 맞히면 복습 단계로 넘어가요. 복습 간격은 기억 모델(FSRS)이 "잊어버릴 것 같은 날"을 예측해서 정하고, 90일 뒤에도 기억할 거라고 예측되면 졸업해요. 중간에 틀리면 매일 단계부터 다시 시작해요. 하루에 여러 번 맞혀도 하루로 쳐요. 단어를 누르면 뜻을 고칠 수 있지만, 자동 업데이트를 연결했다면 Gist의 단어장을 고쳐야 다음에도 유지돼요.</p>
     <div class="words" id="words"></div>
   </section>
 
@@ -175,16 +176,37 @@ const store = {
   get(k, d){ try{ const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; }catch(e){ return d; } },
   set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
 };
-/* Stages (box): 0-4 = daily, needs 5 right days in a row; 5 = weekly check; 6 = monthly check; 7 = graduated.
-   Only the first answer of each day moves a word, so the morning and evening commute don't count twice. */
-const STAGE_GAP = [1, 1, 1, 1, 1, 7, 30];         // days until the next check, by box 0..6
-const GRADUATED = 7;
+/* Stages (box): 0-4 = daily, needs 5 right days in a row; 5 = review spaced by FSRS; 7 = graduated.
+   Only the first answer of each day moves a word, so the morning and evening commute don't count twice.
+   A miss at any stage starts the daily run again. */
+const REVIEW = 5, GRADUATED = 7;
+
+/* FSRS-4.5 memory model (open-spaced-repetition). Each word keeps stability S (days until recall
+   drops to 90%) and difficulty D (1-10). Grades: 1 again, 2 hard, 3 good. Default weights come from
+   the FSRS project (fitted on many Anki users); they can be refitted to my own review log later. */
+const FSRS_W = [0.4872, 1.4003, 3.7145, 13.8206, 5.1618, 1.2298, 0.8975, 0.031, 1.6474, 0.1367, 1.0461, 2.1072, 0.0793, 0.3246, 1.587, 0.2272, 2.8755];
+const FSRS_DECAY = -0.5, FSRS_FACTOR = 19 / 81;
+const RETENTION = 0.9;          // ask again when predicted recall drops to 90%
+const GRAD_STABILITY = 90;      // graduate when the word should still be 90% remembered after 90 days
+const clampD = x => Math.min(10, Math.max(1, x));
+const recallProb = (t, S) => Math.pow(1 + FSRS_FACTOR * t / S, FSRS_DECAY);
+const fsrsInterval = S => Math.max(1, Math.round(S / FSRS_FACTOR * (Math.pow(RETENTION, 1 / FSRS_DECAY) - 1)));
+function fsrsUpdate(p, g, t){
+  const w = FSRS_W;
+  if (p.s == null){ p.s = w[g - 1]; p.d = clampD(w[4] - (g - 3) * w[5]); return; }
+  const R = recallProb(t, p.s), D = p.d;
+  p.s = g === 1
+    ? w[11] * Math.pow(D, -w[12]) * (Math.pow(p.s + 1, w[13]) - 1) * Math.exp(w[14] * (1 - R))
+    : p.s * (Math.exp(w[8]) * (11 - D) * Math.pow(p.s, -w[9]) * (Math.exp(w[10] * (1 - R)) - 1) * (g === 2 ? w[15] : 1) + 1);
+  p.d = clampD(w[7] * clampD(w[4]) + (1 - w[7]) * (D - w[6] * (g - 3)));
+}
 const DAY = 86400000;
 const today = () => Math.floor((Date.now() - new Date().getTimezoneOffset() * 60000) / DAY);   // local (KST) day
 const dayLabel = d => { const t = new Date(d * DAY); return `${t.getUTCMonth() + 1}월 ${t.getUTCDate()}일`; };
-const stageLabel = box => box >= GRADUATED ? "졸업" : box === 6 ? "월간 확인" : box === 5 ? "주간 확인" : `매일 ${box}/5`;
+const stageLabel = p => p.box >= GRADUATED ? "졸업" : p.box >= REVIEW ? `복습 · ${Math.max(0, p.due - today())}일 뒤` : `매일 ${p.box}/5`;
 
 let vocab = null;                                 // {title, items}
+let reviewLog = store.get("vq-log", []);         // every answer: {id, at, day, ok, type, ms, hints, repeats, pass, counted, box, since}
 let progress = store.get("vq-progress", {});      // id -> {box, due, seen, right, day (last counted), grad (day)}
 let settings = Object.assign({count:30, rate:1, gap:2.5, t1:true, t2:true, t3:true}, store.get("vq-settings", {}));
 
@@ -379,6 +401,26 @@ function listen(timeout = 8000){
   });
 }
 
+/* ---------- study record backup ----------
+   In the app the log and progress are written to Documents/VocabQuiz/logs after every quiz, so they
+   survive a reinstall and reach the home PC with the photos. In a browser the button downloads them. */
+const backupData = () => JSON.stringify({savedAt: new Date().toISOString(), progress, log: reviewLog});
+async function saveBackup(){
+  if (!NATIVE) return false;
+  await NativeFS.writeFile({path: "VocabQuiz/logs/study_record.json", data: backupData(), directory: "DOCUMENTS", encoding: "utf8", recursive: true});
+  return true;
+}
+async function exportRecord(){
+  const msg = $("settingsMsg");
+  try{
+    if (NATIVE){ await saveBackup(); msg.textContent = `학습 기록(답 ${reviewLog.length}개)을 Documents/VocabQuiz/logs에 저장했어요.`; return; }
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([backupData()], {type: "application/json"}));
+    a.download = "study_record.json"; a.click(); URL.revokeObjectURL(a.href);
+    msg.textContent = `학습 기록(답 ${reviewLog.length}개)을 내려받았어요.`;
+  }catch(e){ msg.textContent = "저장하지 못했어요: " + e.message; }
+}
+
 /* ---------- note photos (app only) ----------
    Photos go to Documents/VocabQuiz/inbox on the phone. Syncthing copies that folder to the home PC,
    which reads the handwriting and adds the words to the gist whenever it is switched on. */
@@ -427,7 +469,7 @@ function buildQueue(){
   const order = (a, b) => (a.p.box - b.p.box) || (Math.random() - 0.5);
   const due = items.filter(x => x.p.due <= d).sort(order);
   // extra practice only from the daily stage; weekly/monthly words wait for their day
-  const extra = items.filter(x => x.p.due > d && x.p.box < 5).sort(order);
+  const extra = items.filter(x => x.p.due > d && x.p.box < REVIEW).sort(order);
   return [...due, ...extra].slice(0, settings.count).map(({it, p}) => ({it, type: pickType(it, p.box)}));
 }
 function pickType(it, box){
@@ -442,16 +484,23 @@ const questionText = q => q.type === "list" ? q.it.list.prompt : q.type === "ter
 const displayText = q => q.type === "list" ? q.it.list.prompt : q.type === "term2def" ? `“${q.it.term}” 무슨 뜻일까요?` : `${q.it.meaning}. 이걸 뭐라고 할까요?`;
 
 /* -> true when this answer graduates the word */
-function record(it, ok){
+function record(it, ok, q){
   const p = progress[it.id] || {box:0, due:0, seen:0, right:0};
   const d = today();
+  const g = !ok ? 1 : (q && q.hints ? 2 : 3);    // FSRS grade: wrong/pass = again, right after a hint = hard, else good
   let graduated = false;
+  // review log: the raw data for fitting FSRS to me later (one line per answer)
+  reviewLog.push({id: it.id, at: Date.now(), day: d, ok, type: q ? q.type : null, ms: q ? q.ms : null,
+                  hints: q ? q.hints : 0, repeats: q ? q.repeats : 0, pass: !!(q && q.pass),
+                  counted: p.day !== d, box: p.box, since: p.day == null ? null : d - p.day, g});
+  store.set("vq-log", reviewLog);
   p.seen++; if (ok) p.right++;
   if (p.day !== d && p.box < GRADUATED){          // first answer today: move the word
+    fsrsUpdate(p, g, p.day == null ? 0 : d - p.day);
     p.day = d;
-    p.box = ok ? p.box + 1 : 0;                   // a miss at any stage starts the daily run again
-    if (p.box >= GRADUATED){ p.box = GRADUATED; p.grad = d; graduated = true; }
-    else p.due = d + STAGE_GAP[p.box];
+    p.box = !ok ? 0 : Math.min(REVIEW, p.box + 1);
+    if (p.box >= REVIEW && p.s >= GRAD_STABILITY){ p.box = GRADUATED; p.grad = d; graduated = true; }
+    else p.due = d + (p.box < REVIEW ? 1 : fsrsInterval(p.s));
   }
   progress[it.id] = p; store.set("vq-progress", progress);
   return graduated;
@@ -459,6 +508,7 @@ function record(it, ok){
 
 async function askOne(q){
   let silent = 0;
+  q.hints = 0; q.repeats = 0;
   for (;;){
     if (session.cancelled) return "stop";
     setPill("speaking", "문제 읽는 중"); $("question").textContent = displayText(q); $("heard").textContent = ""; $("feedback").className = "feedback";
@@ -466,12 +516,15 @@ async function askOne(q){
     if (session.cancelled) return "stop";
     await beep();
     setPill("listening", "듣는 중");
+    const heardAt = Date.now();
     const {alts} = await listen();
+    q.ms = Date.now() - heardAt;              // from the beep to the end of the answer (includes the recognizer's end-of-speech wait)
     if (session.cancelled) return "stop";
     const cmd = command(alts);
     if (cmd === "stop") return "stop";
-    if (cmd === "repeat") continue;
-    if (cmd === "hint"){ await speak(hintFor(q)); continue; }
+    if (cmd === "repeat"){ q.repeats++; continue; }
+    if (cmd === "hint"){ q.hints++; await speak(hintFor(q)); continue; }
+    q.pass = cmd === "pass";
     if (!alts.length && !cmd){
       if (++silent < 2){ setPill("", "못 들었어요"); await speak("못 들었어요. 한 번 더 말해주세요."); continue; }
     }
@@ -514,7 +567,7 @@ async function judge(q, alts){
   if (!ok && alts) $("heard").textContent = `들은 말: ${alts[0]}`;
   setPill(ok ? "ok" : "bad", ok ? "정답" : alts ? "오답" : "패스");
   showFeedback(ok ? "ok" : "bad", show);
-  if (record(it, ok)){
+  if (record(it, ok, q)){
     say += ` ${it.term}${josa(it.term, "은", "는")} 졸업이에요! 이제 문제로 안 나와요.`;
     show = "🎓 졸업! " + show; session.grads.push(it.term);
   }
@@ -568,6 +621,7 @@ async function runSession(){
   setPill("", "끝"); $("question").textContent = "오늘 퀴즈 끝!"; showFeedback("info", summary);
   if (!cancelled) await speak(summary + " 수고했어요.");
   session = null; setRunning(false); updateScore(); keepAwake(false);
+  saveBackup().catch(() => {});
 }
 function stopSession(){
   if (!session) return;
@@ -608,7 +662,7 @@ function renderWords(){
   vocab.items.filter(it => !isGrad(it)).forEach(it => {
     const p = progress[it.id] || {box:0};
     const d = document.createElement("details"); d.className = "word";
-    d.innerHTML = `<summary><span class="t"></span><span class="boxes" title="${stageLabel(p.box)}">${[1,2,3,4,5,6,7].map(i => `<i class="${i <= p.box ? "on" : ""}${i > 5 ? " wide" : ""}"></i>`).join("")}<span class="stage">${p.seen ? stageLabel(p.box) : "새 단어"}</span></span><span class="m"></span></summary>
+    d.innerHTML = `<summary><span class="t"></span><span class="boxes">${[1,2,3,4,5].map(i => `<i class="${i <= p.box ? "on" : ""}"></i>`).join("")}<span class="stage">${p.seen ? stageLabel(p) : "새 단어"}</span></span><span class="m"></span></summary>
       <div class="edit"><p class="extra"></p><textarea aria-label="뜻"></textarea>
       <label><input type="checkbox" class="chk"> 확인 필요</label>
       <label><input type="checkbox" class="act"> 퀴즈에 내기</label>
@@ -676,6 +730,7 @@ function bindSettings(){
     catch(e){ $("settingsMsg").textContent = "복사하지 못했어요. 이 브라우저는 클립보드 쓰기를 막고 있어요."; }
   };
   let armed = false;
+  $("recordBtn").onclick = exportRecord;
   $("resetBtn").onclick = () => {
     if (!armed){ armed = true; $("resetBtn").textContent = "한 번 더 누르면 초기화"; setTimeout(() => { armed = false; $("resetBtn").textContent = "학습 기록 초기화"; }, 4000); return; }
     progress = {}; store.set("vq-progress", progress); armed = false;

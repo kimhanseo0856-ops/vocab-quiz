@@ -118,6 +118,7 @@ h2{font-size:16px;margin:0}
 .edit{display:grid;gap:8px;padding:0 12px 12px}
 .edit textarea{font:inherit;font-size:14px;width:100%;min-height:64px;padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--fg);resize:vertical}
 .edit label{display:flex;gap:6px;align-items:center;font-size:13px}
+.btn.del{color:var(--bad);margin-left:auto}
 .extra{font-size:13px;color:var(--muted);margin:0}
 .settings{display:grid;gap:10px}
 .settings label{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:6px 12px;font-size:14px}
@@ -932,7 +933,7 @@ function renderWords(){
       <div class="edit"><p class="extra"></p><textarea aria-label="뜻"></textarea>
       <label><input type="checkbox" class="chk"> 확인 필요</label>
       <label><input type="checkbox" class="act"> 퀴즈에 내기</label>
-      <div class="row"><button class="btn save" type="button">저장</button></div></div>`;
+      <div class="row"><button class="btn save" type="button">저장</button><button class="btn del" type="button">단어 삭제</button></div></div>`;
     const t = d.querySelector(".t"); t.textContent = it.term;
     if (it.check){ const s = document.createElement("span"); s.className = "tag"; s.textContent = "확인 필요"; t.appendChild(s); }
     if (it.active === false || !it.meaning){ const s = document.createElement("span"); s.className = "tag off"; s.textContent = it.meaning ? "제외" : "뜻 없음"; t.appendChild(s); }
@@ -941,6 +942,19 @@ function renderWords(){
     d.querySelector("textarea").value = it.meaning || "";
     d.querySelector(".chk").checked = !!it.check;
     d.querySelector(".act").checked = it.active !== false;
+    const del = d.querySelector(".del");
+    del.onclick = () => {                           // press twice: a misread word is removed for good
+      if (!del.dataset.armed){
+        del.dataset.armed = "1"; del.textContent = "한 번 더 누르면 삭제";
+        setTimeout(() => { delete del.dataset.armed; del.textContent = "단어 삭제"; }, 4000);
+        return;
+      }
+      edits[it.id] = {deleted: true, at: new Date().toISOString()};
+      store.set("vq-edits", edits);
+      vocab.items = vocab.items.filter(x => x.id !== it.id);
+      store.set("vq-vocab", vocab); renderWords(); renderToday();
+      $("pageTitle").textContent = $("wordsTitle").textContent;
+    };
     d.querySelector(".save").onclick = () => {
       const meaning = d.querySelector("textarea").value.trim();
       const filled = meaning && meaning !== (it.meaning || ""), wasEmpty = !it.meaning;
@@ -1013,7 +1027,8 @@ function bindSettings(){
 /* Edits made on the phone are kept apart and laid over every list that arrives from the gist,
    so the next sync doesn't wipe them. They also travel in the backup file for the home PC. */
 function applyEdits(v){
-  for (const it of v.items || []){
+  v.items = (v.items || []).filter(it => !(edits[it.id] && edits[it.id].deleted));   // deleted on this phone
+  for (const it of v.items){
     const e = edits[it.id];
     if (e) Object.assign(it, {meaning: e.meaning, check: e.check, active: e.active});
   }
@@ -1102,7 +1117,7 @@ function leaveKakao(){
 /* The app shows the live page, but the phone may keep an old copy for a few minutes. On start and
    whenever the app comes back to the front, compare APP_VERSION with the copy on the server and
    reload once (with a fresh query string so no cache is used) if it changed. */
-const APP_VERSION = "2026-10-15.7";
+const APP_VERSION = "2026-10-15.8";
 async function checkUpdate(){
   if (session || location.protocol !== "https:") return;
   try{

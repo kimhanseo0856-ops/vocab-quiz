@@ -791,15 +791,18 @@ window.addEventListener("popstate", e => showPage(e.state && e.state.page, false
 if (history.state && history.state.page) history.replaceState(null, "");    // a reload always starts on the quiz screen
 document.addEventListener("click", e => { if (!$("menu").hidden && !e.target.closest("#menu, #menuBtn")) openMenu(false); });
 /* Phone back button (app only, needs the @capacitor/app plugin in the APK): page -> quiz screen,
-   open menu -> close it, running quiz -> keep it going in the background, otherwise leave the app. */
+   open menu -> close it, running quiz -> keep it going in the background, otherwise press twice
+   within 2 seconds to leave the app. */
 if (NATIVE){
   try{
     const NativeApp = window.Capacitor.registerPlugin("App");
+    let lastBack = 0;
     NativeApp.addListener("backButton", () => {
       if ($("mainView").hidden) history.state && history.state.page ? history.back() : showPage(null);
       else if (!$("menu").hidden) openMenu(false);
       else if (session) NativeApp.minimizeApp();
-      else NativeApp.exitApp();
+      else if (Date.now() - lastBack < 2000) NativeApp.exitApp();
+      else { lastBack = Date.now(); showFeedback("info", "뒤로가기를 한 번 더 누르면 종료돼요.", true); }
     }).catch(() => {});
   }catch(e){}
 }
@@ -990,7 +993,7 @@ function leaveKakao(){
 /* The app shows the live page, but the phone may keep an old copy for a few minutes. On start and
    whenever the app comes back to the front, compare APP_VERSION with the copy on the server and
    reload once (with a fresh query string so no cache is used) if it changed. */
-const APP_VERSION = "2026-10-15.2";
+const APP_VERSION = "2026-10-15.3";
 async function checkUpdate(){
   if (session || location.protocol !== "https:") return;
   try{

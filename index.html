@@ -674,26 +674,26 @@ function record(it, ok, q){
 async function askOne(q){
   let silent = 0;
   q.hints = 0; q.repeats = 0;
-  for (;;){
+  for (;;){                                   // read the question (again only when asked: "다시 말해줘")
     if (session.cancelled) return "stop";
     setPill("speaking", "문제 읽는 중"); $("question").textContent = displayText(q); $("heard").textContent = ""; $("feedback").className = "feedback";
     await speak(questionText(q));
-    if (session.cancelled) return "stop";
-    await beep();
-    setPill("listening", "듣는 중");
-    const heardAt = Date.now();
-    const {alts} = await listen();
-    q.ms = Date.now() - heardAt;              // from the beep to the end of the answer (includes the recognizer's end-of-speech wait)
-    if (session.cancelled) return "stop";
-    const cmd = command(alts);
-    if (cmd === "stop") return "stop";
-    if (cmd === "repeat"){ q.repeats++; continue; }
-    if (cmd === "hint"){ q.hints++; await speak(hintFor(q)); continue; }
-    q.pass = cmd === "pass";
-    if (!alts.length && !cmd){
-      if (++silent < 2){ setPill("", "못 들었어요"); await speak("못 들었어요. 한 번 더 말해주세요."); continue; }
+    for (;;){                                 // wait for an answer; silence or a hint just waits again
+      if (session.cancelled) return "stop";
+      await beep();
+      setPill("listening", "듣는 중");
+      const heardAt = Date.now();
+      const {alts} = await listen();
+      q.ms = Date.now() - heardAt;            // from the beep to the end of the answer (includes the recognizer's end-of-speech wait)
+      if (session.cancelled) return "stop";
+      const cmd = command(alts);
+      if (cmd === "stop") return "stop";
+      if (cmd === "repeat"){ q.repeats++; break; }
+      if (cmd === "hint"){ q.hints++; await speak(hintFor(q)); continue; }
+      q.pass = cmd === "pass";
+      if (!alts.length && !cmd && ++silent < 2) continue;   // no words heard: one more wait, no re-reading
+      return await judge(q, cmd === "pass" || !alts.length ? null : alts);
     }
-    return await judge(q, cmd === "pass" || !alts.length ? null : alts);
   }
 }
 function hintFor(q){
@@ -1102,7 +1102,7 @@ function leaveKakao(){
 /* The app shows the live page, but the phone may keep an old copy for a few minutes. On start and
    whenever the app comes back to the front, compare APP_VERSION with the copy on the server and
    reload once (with a fresh query string so no cache is used) if it changed. */
-const APP_VERSION = "2026-10-15.6";
+const APP_VERSION = "2026-10-15.7";
 async function checkUpdate(){
   if (session || location.protocol !== "https:") return;
   try{

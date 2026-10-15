@@ -112,6 +112,7 @@ h2{font-size:16px;margin:0}
 .chips{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0;font-size:12px;color:var(--muted)}
 .chips span{padding:2px 9px;border-radius:999px;border:1px solid var(--line);color:var(--fg)}
 .type[hidden]{display:none}
+.settings label[hidden]{display:none}
 .tag{font-size:11px;padding:1px 7px;border-radius:4px;background:var(--warn-soft);color:var(--warn);font-weight:600;margin-left:6px;vertical-align:1px}
 .tag.off{background:var(--bg);color:var(--muted)}
 .edit{display:grid;gap:8px;padding:0 12px 12px}
@@ -178,6 +179,8 @@ details.panel[open]>summary{margin-bottom:10px}
       <summary><h2>설정</h2></summary>
       <div class="settings">
         <label>한 번에 풀 문제 수 <select id="setCount"><option>10</option><option>20</option><option selected>30</option><option>40</option><option>60</option><option value="999">전부</option></select></label>
+        <label class="remind" hidden>출근 알림 (평일) <select id="setAm"><option value="">끄기</option><option>06:30</option><option>07:00</option><option>07:30</option><option>07:50</option><option>08:00</option><option>08:30</option></select></label>
+        <label class="remind" hidden>퇴근 알림 (평일) <select id="setPm"><option value="">끄기</option><option>17:00</option><option>17:30</option><option>18:00</option><option>18:30</option><option>19:00</option></select></label>
         <label>답 알려준 뒤 쉬는 시간 <select id="setGap"><option value="1.5">짧게 (1.5초)</option><option value="2.5" selected>보통 (2.5초)</option><option value="4">길게 (4초)</option></select></label>
         <label>읽기 속도 <select id="setRate"><option value="0.85">느리게</option><option value="1" selected>보통</option><option value="1.15">빠르게</option></select></label>
         <label>뜻 듣고 단어 맞히기 <input type="checkbox" id="setT1" checked></label>
@@ -268,7 +271,7 @@ let vocab = null;                                 // {title, items}
 let reviewLog = store.get("vq-log", []);         // every answer: {id, at, day, ok, type, ms, hints, repeats, pass, counted, box, since}
 let edits = store.get("vq-edits", {});           // id -> {meaning, check, active, at}
 let progress = store.get("vq-progress", {});      // id -> {box, due, seen, right, day (last counted), grad (day)}
-let settings = Object.assign({count:30, rate:1, gap:2.5, t1:true, t2:true, t3:true}, store.get("vq-settings", {}));
+let settings = Object.assign({count:30, rate:1, gap:2.5, t1:true, t2:true, t3:true, am:"", pm:""}, store.get("vq-settings", {}));
 
 /* ---------- Korean text matching ---------- */
 const CHO = "ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ";
@@ -305,7 +308,26 @@ function sim(heard, expected){
   }
   return best;
 }
-const itemScore = (alts, it) => Math.max(0, ...alts.flatMap(a => [it.term, it.say, ...(it.aliases || [])].map(x => sim(a, x))));
+const itemScore = (alts, it) => Math.max(0, ...alts.flatMap(a => [it.term, it.say, ...(it.aliases || []), ...(learned[it.id] || [])].map(x => sim(a, x))));
+
+/* Mishearings learned on this phone. When a term answer is marked wrong but sounds close to the word
+   (similarity 0.6-0.8, closer to this word than to any other), the heard text is counted; the second
+   time the same text comes back it is accepted as an alias from then on (e.g. "엠비피" for MVP). */
+let learned = store.get("vq-alias", {});         // id -> [heard text]
+let heardCount = store.get("vq-heard", {});      // id -> {heard text: count}
+function learnMishearing(it, alts){
+  let best = null, score = 0;
+  for (const a of alts){ const v = itemScore([a], it); if (v > score){ score = v; best = a; } }
+  best = (best || "").replace(/\s+/g, " ").trim();
+  if (!best || best.length > 14 || score < 0.6 || score >= 0.8) return false;
+  for (const other of vocab.items) if (other.id !== it.id && itemScore([best], other) >= score) return false;
+  const c = heardCount[it.id] = heardCount[it.id] || {};
+  c[best] = (c[best] || 0) + 1; store.set("vq-heard", heardCount);
+  if (c[best] < 2) return false;
+  (learned[it.id] = learned[it.id] || []).push(best); delete c[best];
+  store.set("vq-alias", learned); store.set("vq-heard", heardCount);
+  return best;
+}
 
 function gradeTerm(alts, target){
   const pool = vocab.items.filter(i => i.meaning || i.id === target.id);
@@ -464,7 +486,7 @@ function listen(timeout = 8000){
 /* ---------- study record backup ----------
    In the app the log and progress are written to Documents/VocabQuiz/logs after every quiz, so they
    survive a reinstall and reach the home PC with the photos. In a browser the button downloads them. */
-const backupData = () => JSON.stringify({savedAt: new Date().toISOString(), progress, log: reviewLog, edits});
+const backupData = () => JSON.stringify({savedAt: new Date().toISOString(), progress, log: reviewLog, edits, learned});
 async function saveBackup(){
   if (!NATIVE) return false;
   await NativeFS.writeFile({path: "VocabQuiz/logs/study_record.json", data: backupData(), directory: "DOCUMENTS", encoding: "utf8", recursive: true});
@@ -557,9 +579,11 @@ function noteSetup(){
       await NativeNote.deleteChannel({id: "quiz"}).catch(() => {});
       await NativeNote.createChannel({id: "quiz_live", name: "퀴즈 진행", description: "퀴즈 진행 상황", importance: 3, visibility: 1, vibration: false, sound: "quiz_silence.wav"});
       await NativeNote.registerActionTypes({types: [{id: "QUIZ", actions: [{id: "pass", title: "패스"}, {id: "stop", title: "그만", destructive: true}]}]});
+      await NativeNote.createChannel({id: "reminder", name: "출퇴근 알림", description: "퀴즈 시간 알림", importance: 3, visibility: 1});
       await NativeNote.addListener("localNotificationActionPerformed", e => {
         if (e.actionId === "pass" && typedResolve) typedResolve("패스");
         else if (e.actionId === "stop") stopSession();
+        else if (e.actionId === "tap" && e.notification && e.notification.id >= 7100 && e.notification.id < 7300) startWhenReady();
       });
       return true;
     }catch(err){ return false; }
@@ -572,6 +596,30 @@ async function quizNote(body){
       ongoing: true, autoCancel: false, actionTypeId: "QUIZ", smallIcon: "ic_stat_quiz"}]});
   }catch(err){}
 }
+/* Weekday reminders at the chosen commute times; tapping one opens the app and starts the quiz. */
+async function scheduleReminders(){
+  if (!(await noteSetup())) return false;
+  try{
+    const old = [];
+    for (const base of [7100, 7200]) for (let wd = 1; wd <= 7; wd++) old.push({id: base + wd});
+    await NativeNote.cancel({notifications: old}).catch(() => {});
+    const list = [];
+    for (const [time, base, label] of [[settings.am, 7100, "출근"], [settings.pm, 7200, "퇴근"]]){
+      if (!time) continue;
+      const [hour, minute] = time.split(":").map(Number);
+      for (let wd = 2; wd <= 6; wd++)               // Monday (2) to Friday (6)
+        list.push({id: base + wd, title: `${label}길 단어 퀴즈`, body: "탭하면 바로 퀴즈를 시작해요.", channelId: "reminder",
+                   smallIcon: "ic_stat_quiz", schedule: {on: {weekday: wd, hour, minute}, allowWhileIdle: true}});
+    }
+    if (list.length) await NativeNote.schedule({notifications: list});
+    return true;
+  }catch(err){ return false; }
+}
+function startWhenReady(n = 0){
+  if (session) return;
+  if (vocab) runSession();
+  else if (n < 40) setTimeout(() => startWhenReady(n + 1), 250);
+}
 function quizNoteClear(){
   if (NativeNote) NativeNote.cancel({notifications: [{id: NOTE_ID}]}).catch(() => {});
 }
@@ -582,10 +630,12 @@ function buildQueue(){
   const d = today();
   const items = activeItems().map(it => ({it, p: progress[it.id] || {box:0, due:0}})).filter(x => x.p.box < GRADUATED);
   const order = (a, b) => (a.p.box - b.p.box) || (Math.random() - 0.5);
-  const due = items.filter(x => x.p.due <= d).sort(order);
-  // extra practice only from the daily stage; weekly/monthly words wait for their day
-  const extra = items.filter(x => x.p.due > d && x.p.box < REVIEW).sort(order);
-  return [...due, ...extra].slice(0, settings.count).map(({it, p}) => ({it, type: pickType(it, p.box)}));
+  // words already being learned come first (most overdue first), then new words, so reviews never get crowded out
+  const due = items.filter(x => x.p.seen && x.p.due <= d).sort((a, b) => (a.p.due - b.p.due) || order(a, b));
+  const fresh = items.filter(x => !x.p.seen).sort(() => Math.random() - 0.5);
+  // extra practice only from the daily stage; review-stage words wait for their day
+  const extra = items.filter(x => x.p.seen && x.p.due > d && x.p.box < REVIEW).sort(order);
+  return [...due, ...fresh, ...extra].slice(0, settings.count).map(({it, p}) => ({it, type: pickType(it, p.box)}));
 }
 function pickType(it, box){
   const opts = [];
@@ -607,7 +657,7 @@ function record(it, ok, q){
   // review log: the raw data for fitting FSRS to me later (one line per answer)
   reviewLog.push({id: it.id, at: Date.now(), day: d, ok, type: q ? q.type : null, ms: q ? q.ms : null,
                   hints: q ? q.hints : 0, repeats: q ? q.repeats : 0, pass: !!(q && q.pass),
-                  counted: p.day !== d, box: p.box, since: p.day == null ? null : d - p.day, g});
+                  counted: p.day !== d, box: p.box, since: p.day == null ? null : d - p.day, g, heard: q ? q.heard : null});
   store.set("vq-log", reviewLog);
   p.seen++; if (ok) p.right++;
   if (p.day !== d && p.box < GRADUATED){          // first answer today: move the word
@@ -660,6 +710,8 @@ async function judge(q, alts){
     ok = gradeTerm(alts, it).ok;
     say = ok ? `정답이에요! ${it.say}.` : `아쉬워요. 정답은, ${it.say}.`;
     show = ok ? `정답: ${it.term}` : `정답은 ${it.term}`;
+    const learnedText = ok ? false : learnMishearing(it, alts);
+    if (learnedText) show += ` · "${learnedText}"는 다음부터 정답으로 인정해요`;
   } else if (q.type === "list"){
     const r = gradeList(alts, it.list); ok = r.ok;
     const f = r.found.join(", "), m = r.missed.join(", ");
@@ -682,6 +734,7 @@ async function judge(q, alts){
   if (!ok && alts) $("heard").textContent = `들은 말: ${alts[0]}`;
   setPill(ok ? "ok" : "bad", ok ? "정답" : alts ? "오답" : "패스");
   showFeedback(ok ? "ok" : "bad", show);
+  q.heard = alts ? alts[0] : null;
   if (record(it, ok, q)){
     say += ` ${it.term}${josa(it.term, "은", "는")} 졸업이에요! 이제 문제로 안 나와요.`;
     show = "🎓 졸업! " + show; session.grads.push(it.term);
@@ -705,6 +758,20 @@ async function nextCue(n){
   await speak(`${n}번 문제.`);
 }
 
+/* "오늘은 20문제, 복습 8개와 새 단어 12개예요. 어제 틀린 단어 3개도 들어 있어요. 이번 주에 2개 졸업했어요." */
+function briefing(queue){
+  const d = today();
+  const review = queue.filter(q => (progress[q.it.id] || {}).seen).length, fresh = queue.length - review;
+  const missed = new Set(reviewLog.filter(r => r.day === d - 1 && r.counted !== false && !r.ok).map(r => r.id));
+  const yWrong = queue.filter(q => missed.has(q.it.id)).length;
+  const wGrad = Object.values(progress).filter(p => p.box >= GRADUATED && p.grad >= d - 6).length;
+  let t = `단어 퀴즈를 시작할게요. 오늘은 ${queue.length}문제`;
+  t += review && fresh ? `, 복습 ${review}개와 새 단어 ${fresh}개예요.` : "예요.";
+  if (yWrong) t += ` 어제 틀린 단어 ${yWrong}개도 들어 있어요.`;
+  if (wGrad) t += ` 이번 주에 ${wGrad}개 졸업했어요.`;
+  return t;
+}
+
 async function runSession(){
   const queue = buildQueue();
   if (!queue.length){
@@ -715,7 +782,7 @@ async function runSession(){
   }
   session = {queue, i: 0, right: 0, wrong: new Set(), cancelled: false, requeued: new Set(), grads: []};
   setRunning(true); await keepAwake(true);
-  await speak(`단어 퀴즈를 시작할게요. 오늘은 ${queue.length}문제예요.`);
+  await speak(briefing(queue));
   const firstLength = queue.length;
   for (session.i = 0; session.i < session.queue.length; session.i++){
     updateScore();
@@ -911,11 +978,15 @@ function renderGrads(grads){
 function bindSettings(){
   $("setCount").value = String(settings.count); $("setRate").value = String(settings.rate); $("setGap").value = String(settings.gap);
   $("setT1").checked = settings.t1; $("setT2").checked = settings.t2; $("setT3").checked = settings.t3;
+  $("setAm").value = settings.am; $("setPm").value = settings.pm;
   const save = () => {
-    settings = {count: +$("setCount").value, rate: +$("setRate").value, gap: +$("setGap").value, t1: $("setT1").checked, t2: $("setT2").checked, t3: $("setT3").checked};
+    const timesChanged = settings.am !== $("setAm").value || settings.pm !== $("setPm").value;
+    settings = {count: +$("setCount").value, rate: +$("setRate").value, gap: +$("setGap").value, t1: $("setT1").checked, t2: $("setT2").checked, t3: $("setT3").checked,
+                am: $("setAm").value, pm: $("setPm").value};
     store.set("vq-settings", settings);
+    if (timesChanged) scheduleReminders().then(ok => { $("settingsMsg").textContent = ok ? "알림 시간을 저장했어요." : "알림 권한이 없어서 알림을 맞추지 못했어요."; });
   };
-  ["setCount","setRate","setGap","setT1","setT2","setT3"].forEach(id => $(id).onchange = save);
+  ["setCount","setRate","setGap","setT1","setT2","setT3","setAm","setPm"].forEach(id => $(id).onchange = save);
   $("importBtn").onclick = () => $("importFile").click();
   $("importFile").onchange = async e => {
     const f = e.target.files[0]; if (!f) return;
@@ -1031,7 +1102,7 @@ function leaveKakao(){
 /* The app shows the live page, but the phone may keep an old copy for a few minutes. On start and
    whenever the app comes back to the front, compare APP_VERSION with the copy on the server and
    reload once (with a fresh query string so no cache is used) if it changed. */
-const APP_VERSION = "2026-10-15.5";
+const APP_VERSION = "2026-10-15.6";
 async function checkUpdate(){
   if (session || location.protocol !== "https:") return;
   try{
@@ -1053,6 +1124,7 @@ async function init(){
     $("menuPhoto").hidden = false;
     quizNoteClear();                 // left over if the app was closed mid-quiz
     noteSetup();                     // ask for the notification permission now, not in the middle of a drive
+    document.querySelectorAll(".remind").forEach(el => el.hidden = false);
     $("shootBtn").onclick = () => addPhotos(true);
     $("pickBtn").onclick = () => addPhotos(false);
     inboxCount().then(n => { if (n) $("photoMsg").textContent = `처리를 기다리는 사진: ${n}장`; });

@@ -30,7 +30,8 @@ body{background:var(--bg);color:var(--fg);font:15px/1.55 var(--f);padding-top:en
 header{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap}
 h1{font-size:22px;margin:0;font-weight:700;text-wrap:balance}
 .src{font-size:12px;color:var(--muted)}
-.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:18px;display:grid;gap:12px;min-width:0}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:18px;display:grid;grid-template-columns:minmax(0,1fr);gap:12px;min-width:0}
+.card>*{min-width:0}
 .status{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;letter-spacing:.02em}
 .pill{padding:3px 10px;border-radius:999px;background:var(--bg);color:var(--muted)}
 .pill.speaking{background:var(--accent);color:var(--accent-fg)}
@@ -77,7 +78,8 @@ h2{font-size:16px;margin:0}
 .edit label{display:flex;gap:6px;align-items:center;font-size:13px}
 .extra{font-size:13px;color:var(--muted);margin:0}
 .settings{display:grid;gap:10px}
-.settings label{display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:14px}
+.settings label{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:6px 12px;font-size:14px}
+.settings select{max-width:100%}
 .settings select{font:inherit;padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--fg)}
 details.panel>summary{cursor:pointer;font-weight:600;padding:2px 0}
 details.panel[open]>summary{margin-bottom:10px}
@@ -141,6 +143,7 @@ details.panel[open]>summary{margin-bottom:10px}
   </section>
 </div>
 
+<script src="capacitor.js"></script>
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
@@ -248,7 +251,50 @@ if ("speechSynthesis" in window){ pickVoice(); speechSynthesis.onvoiceschanged =
 let session = null;           // {queue, i, right, total, wrongIds, cancelled}
 let rec = null, typedResolve = null;
 
+/* Inside the Android app (Capacitor) the WebView has no Web Speech API, so speaking and listening go
+   through native plugins instead. In a browser NATIVE is false and the Web Speech code below is used. */
+const NATIVE = !!(window.Capacitor && typeof window.Capacitor.registerPlugin === "function" && window.Capacitor.isNativePlatform());
+const NativeTTS = NATIVE ? window.Capacitor.registerPlugin("TextToSpeech") : null;
+const NativeSTT = NATIVE ? window.Capacitor.registerPlugin("SpeechRecognition") : null;
+const NativeAwake = NATIVE ? window.Capacitor.registerPlugin("KeepAwake") : null;
+let nativeMicOk = null;
+async function nativeMic(){
+  if (nativeMicOk !== null) return nativeMicOk;
+  try{
+    let p = await NativeSTT.checkPermissions();
+    if (p.speechRecognition !== "granted") p = await NativeSTT.requestPermissions();
+    nativeMicOk = p.speechRecognition === "granted";
+  }catch(e){ nativeMicOk = false; }
+  return nativeMicOk;
+}
+async function nativeSpeak(text){
+  if (session?.cancelled) return;
+  const guard = new Promise(r => setTimeout(r, 4000 + text.length * 300 / settings.rate));   // never hang on a lost callback
+  try{ await Promise.race([NativeTTS.speak({text, lang: "ko-KR", rate: settings.rate, pitch: 1.0, volume: 1.0, category: "playback"}), guard]); }catch(e){}
+}
+function nativeListen(timeout, res){
+  let done = false, alts = [];
+  const fin = () => { if (done) return; done = true; clearTimeout(t); typedResolve = null; res({alts}); };
+  typedResolve = text => { alts = [text]; NativeSTT.stop().catch(() => {}); fin(); };
+  let t = setTimeout(() => { NativeSTT.stop().catch(() => {}); fin(); }, timeout + 3000);
+  (async () => {
+    if (!await nativeMic()){
+      $("speechWarn").textContent = "마이크 권한이 없어서 입력창으로 답하는 모드예요. 휴대폰 설정 → 앱 → 출근길 단어 퀴즈 → 권한에서 마이크를 허용해주세요.";
+      $("speechWarn").hidden = false;
+      clearTimeout(t); t = setTimeout(fin, 60000);
+      return;
+    }
+    try{
+      const r = await NativeSTT.start({language: "ko-KR", maxResults: 5, partialResults: false, popup: false});
+      alts = ((r && r.matches) || []).filter(Boolean);
+      if (alts[0]){ $("heard").innerHTML = "들은 말: <b></b>"; $("heard").querySelector("b").textContent = alts[0]; }
+    }catch(e){ /* no speech / no match: an empty answer */ }
+    fin();
+  })();
+}
+
 function speak(text){
+  if (NATIVE) return nativeSpeak(text);
   return new Promise(res => {
     if (!("speechSynthesis" in window) || session?.cancelled){ res(); return; }
     speechSynthesis.cancel();
@@ -274,6 +320,7 @@ function beep(freq = 880, ms = 160){
 let micDenied = false;        // once the mic is refused, answers come from the text box for the rest of the page load
 function listen(timeout = 8000){
   return new Promise(res => {
+    if (NATIVE) return nativeListen(timeout, res);
     let done = false, alts = [];
     const fin = () => { if (done) return; done = true; clearTimeout(t); typedResolve = null; try{ rec && rec.abort(); }catch(e){} rec = null; res({alts}); };
     typedResolve = text => { alts = [text]; fin(); };
@@ -445,6 +492,7 @@ function stopSession(){
   session.cancelled = true;
   try{ speechSynthesis.cancel(); }catch(e){}
   try{ rec && rec.abort(); }catch(e){}
+  if (NATIVE){ NativeTTS.stop().catch(() => {}); NativeSTT.stop().catch(() => {}); }
   if (typedResolve) typedResolve("");
 }
 function setRunning(on){
@@ -454,6 +502,7 @@ function setRunning(on){
 }
 let wakeLock = null;
 async function keepAwake(on){
+  if (NATIVE){ try{ on ? await NativeAwake.keepAwake() : await NativeAwake.allowSleep(); }catch(e){} return; }
   try{
     if (on && "wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen");
     else if (!on && wakeLock){ await wakeLock.release(); wakeLock = null; }
@@ -610,12 +659,14 @@ function leaveKakao(){
 
 async function init(){
   if (leaveKakao()) return;
-  if (!Rec) $("speechWarn").hidden = false;
+  if (!Rec && !NATIVE) $("speechWarn").hidden = false;
   bindSettings();
   $("syncBtn").onclick = () => syncSource(false);
   $("unlinkBtn").onclick = () => { try{ localStorage.removeItem(SOURCE_KEY); }catch(e){} renderSource(); $("settingsMsg").textContent = "자동 업데이트를 끊었어요. 지금 단어장은 그대로 남아 있어요."; };
   renderSource();
   if (await importFromHash()) return;
+  // the Android app is built with the gist address baked in (APP_CONFIG), so it connects on first launch
+  if (window.APP_CONFIG && APP_CONFIG.source && !store.get(SOURCE_KEY, null) && await connectSource(APP_CONFIG.source)) return;
   if (await syncSource(true)) return;
   const saved = store.get("vq-vocab", null);
   if (saved && Array.isArray(saved.items)) return setVocab(saved);

@@ -71,6 +71,12 @@ h2{font-size:16px;margin:0}
 .boxes{display:flex;gap:3px;align-items:center}
 .boxes i{width:8px;height:8px;border-radius:2px;background:var(--line)}
 .boxes i.on{background:var(--ok)}
+.boxes i.wide{width:14px}
+.stage{font-size:12px;color:var(--muted);margin-left:6px;white-space:nowrap}
+.gradbox>summary{list-style:none;cursor:pointer}
+.gradbox>summary::-webkit-details-marker{display:none}
+.gradbox[open]>summary{margin-bottom:10px}
+.gradbox>summary h2::after{content:" ▾";color:var(--muted)}
 .tag{font-size:11px;padding:1px 7px;border-radius:4px;background:var(--warn-soft);color:var(--warn);font-weight:600;margin-left:6px;vertical-align:1px}
 .tag.off{background:var(--bg);color:var(--muted)}
 .edit{display:grid;gap:8px;padding:0 12px 12px}
@@ -148,8 +154,16 @@ details.panel[open]>summary{margin-bottom:10px}
 
   <section class="card">
     <h2 id="wordsTitle">단어장</h2>
-    <p class="hint">칸 5개는 외운 정도예요. 맞힐 때마다 한 칸씩 올라가고 다시 나오는 간격이 1일, 3일, 7일, 14일로 늘어나요. 틀리면 첫 칸으로 돌아가요. 단어를 누르면 뜻을 고칠 수 있지만, 자동 업데이트를 연결했다면 Gist의 단어장을 고쳐야 다음에도 유지돼요.</p>
+    <p class="hint">5일 연속으로 맞히면 일주일 뒤에 한 번, 그것도 맞히면 한 달 뒤에 한 번 더 나오고, 그것까지 맞히면 졸업해요. 중간에 틀리면 매일 단계부터 다시 시작해요. 하루에 여러 번 맞혀도 하루로 쳐요. 단어를 누르면 뜻을 고칠 수 있지만, 자동 업데이트를 연결했다면 Gist의 단어장을 고쳐야 다음에도 유지돼요.</p>
     <div class="words" id="words"></div>
+  </section>
+
+  <section class="card">
+    <details class="gradbox">
+      <summary><h2 id="gradTitle">졸업한 단어</h2></summary>
+      <p class="hint" id="gradEmpty">아직 졸업한 단어가 없어요.</p>
+      <div class="words" id="grads"></div>
+    </details>
   </section>
 </div>
 
@@ -161,12 +175,17 @@ const store = {
   get(k, d){ try{ const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; }catch(e){ return d; } },
   set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
 };
-const INTERVALS = [0, 1, 3, 7, 14, 30];          // days until next review, by box 0..5
+/* Stages (box): 0-4 = daily, needs 5 right days in a row; 5 = weekly check; 6 = monthly check; 7 = graduated.
+   Only the first answer of each day moves a word, so the morning and evening commute don't count twice. */
+const STAGE_GAP = [1, 1, 1, 1, 1, 7, 30];         // days until the next check, by box 0..6
+const GRADUATED = 7;
 const DAY = 86400000;
-const today = () => Math.floor(Date.now() / DAY);
+const today = () => Math.floor((Date.now() - new Date().getTimezoneOffset() * 60000) / DAY);   // local (KST) day
+const dayLabel = d => { const t = new Date(d * DAY); return `${t.getUTCMonth() + 1}월 ${t.getUTCDate()}일`; };
+const stageLabel = box => box >= GRADUATED ? "졸업" : box === 6 ? "월간 확인" : box === 5 ? "주간 확인" : `매일 ${box}/5`;
 
 let vocab = null;                                 // {title, items}
-let progress = store.get("vq-progress", {});      // id -> {box, due, seen, right}
+let progress = store.get("vq-progress", {});      // id -> {box, due, seen, right, day (last counted), grad (day)}
 let settings = Object.assign({count:30, rate:1, gap:2.5, t1:true, t2:true, t3:true}, store.get("vq-settings", {}));
 
 /* ---------- Korean text matching ---------- */
@@ -404,9 +423,12 @@ function updateScore(){ $("score").textContent = session ? `${Math.min(session.i
 function activeItems(){ return vocab.items.filter(i => i.active !== false && i.meaning); }
 function buildQueue(){
   const d = today();
-  const items = activeItems().map(it => ({it, p: progress[it.id] || {box:0, due:0}}));
-  items.sort((a, b) => ((a.p.due > d) - (b.p.due > d)) || (a.p.box - b.p.box) || (Math.random() - 0.5));
-  return items.slice(0, settings.count).map(({it, p}) => ({it, type: pickType(it, p.box)}));
+  const items = activeItems().map(it => ({it, p: progress[it.id] || {box:0, due:0}})).filter(x => x.p.box < GRADUATED);
+  const order = (a, b) => (a.p.box - b.p.box) || (Math.random() - 0.5);
+  const due = items.filter(x => x.p.due <= d).sort(order);
+  // extra practice only from the daily stage; weekly/monthly words wait for their day
+  const extra = items.filter(x => x.p.due > d && x.p.box < 5).sort(order);
+  return [...due, ...extra].slice(0, settings.count).map(({it, p}) => ({it, type: pickType(it, p.box)}));
 }
 function pickType(it, box){
   const opts = [];
@@ -419,11 +441,20 @@ function pickType(it, box){
 const questionText = q => q.type === "list" ? q.it.list.prompt : q.type === "term2def" ? `${q.it.say}. 무슨 뜻일까요?` : `${q.it.meaning}. 이걸 뭐라고 할까요?`;
 const displayText = q => q.type === "list" ? q.it.list.prompt : q.type === "term2def" ? `“${q.it.term}” 무슨 뜻일까요?` : `${q.it.meaning}. 이걸 뭐라고 할까요?`;
 
+/* -> true when this answer graduates the word */
 function record(it, ok){
   const p = progress[it.id] || {box:0, due:0, seen:0, right:0};
-  p.seen++; if (ok){ p.right++; p.box = Math.min(5, p.box + 1); } else p.box = 0;
-  p.due = today() + INTERVALS[p.box];
+  const d = today();
+  let graduated = false;
+  p.seen++; if (ok) p.right++;
+  if (p.day !== d && p.box < GRADUATED){          // first answer today: move the word
+    p.day = d;
+    p.box = ok ? p.box + 1 : 0;                   // a miss at any stage starts the daily run again
+    if (p.box >= GRADUATED){ p.box = GRADUATED; p.grad = d; graduated = true; }
+    else p.due = d + STAGE_GAP[p.box];
+  }
   progress[it.id] = p; store.set("vq-progress", progress);
+  return graduated;
 }
 
 async function askOne(q){
@@ -483,7 +514,10 @@ async function judge(q, alts){
   if (!ok && alts) $("heard").textContent = `들은 말: ${alts[0]}`;
   setPill(ok ? "ok" : "bad", ok ? "정답" : alts ? "오답" : "패스");
   showFeedback(ok ? "ok" : "bad", show);
-  record(it, ok);
+  if (record(it, ok)){
+    say += ` ${it.term}${josa(it.term, "은", "는")} 졸업이에요! 이제 문제로 안 나와요.`;
+    show = "🎓 졸업! " + show; session.grads.push(it.term);
+  }
   if (ok) session.right++; else session.wrong.add(it.term);
   updateScore(); renderWords();
   await speak(say);
@@ -511,7 +545,7 @@ async function runSession(){
       : "아직 단어장이 없어요. 단어장 링크를 열거나, 설정 → 단어장 가져오기로 vocab.json 파일을 넣어주세요.");
     return;
   }
-  session = {queue, i: 0, right: 0, wrong: new Set(), cancelled: false, requeued: new Set()};
+  session = {queue, i: 0, right: 0, wrong: new Set(), cancelled: false, requeued: new Set(), grads: []};
   setRunning(true); await keepAwake(true);
   await speak(`단어 퀴즈를 시작할게요. 오늘은 ${queue.length}문제예요.`);
   const firstLength = queue.length;
@@ -528,7 +562,8 @@ async function runSession(){
   }
   const total = Math.min(session.i, session.queue.length), wrong = [...session.wrong];
   const w = wrong.slice(0, 5).join(", ");
-  const summary = `${total}문제 중 ${session.right}개 맞혔어요.` + (wrong.length ? ` 틀린 단어는 ${w}${josa(w, "이고", "고")}, 내일 다시 나와요.` : " 모두 잘 기억하고 있어요!");
+  const summary = `${total}문제 중 ${session.right}개 맞혔어요.` + (wrong.length ? ` 틀린 단어는 ${w}${josa(w, "이고", "고")}, 내일 다시 나와요.` : " 모두 잘 기억하고 있어요!")
+    + (session.grads.length ? ` 오늘 졸업한 단어는 ${session.grads.length}개예요.` : "");
   const cancelled = session.cancelled;
   setPill("", "끝"); $("question").textContent = "오늘 퀴즈 끝!"; showFeedback("info", summary);
   if (!cancelled) await speak(summary + " 수고했어요.");
@@ -565,19 +600,22 @@ $("typeForm").onsubmit = e => { e.preventDefault(); const v = $("typeInput").val
 
 /* ---------- word list ---------- */
 function renderWords(){
-  $("wordsTitle").textContent = `단어장 · ${activeItems().length}개 출제 중`;
+  const isGrad = it => (progress[it.id] || {}).box >= GRADUATED;
+  const grads = vocab.items.filter(isGrad).sort((a, b) => progress[b.id].grad - progress[a.id].grad);
+  $("wordsTitle").textContent = `단어장 · ${activeItems().filter(it => !isGrad(it)).length}개 공부 중`;
+  renderGrads(grads);
   const box = $("words"); box.innerHTML = "";
-  vocab.items.forEach(it => {
+  vocab.items.filter(it => !isGrad(it)).forEach(it => {
     const p = progress[it.id] || {box:0};
     const d = document.createElement("details"); d.className = "word";
-    d.innerHTML = `<summary><span class="t"></span><span class="boxes">${[1,2,3,4,5].map(i => `<i class="${i <= p.box ? "on" : ""}"></i>`).join("")}</span><span class="m"></span></summary>
+    d.innerHTML = `<summary><span class="t"></span><span class="boxes" title="${stageLabel(p.box)}">${[1,2,3,4,5,6,7].map(i => `<i class="${i <= p.box ? "on" : ""}${i > 5 ? " wide" : ""}"></i>`).join("")}<span class="stage">${p.seen ? stageLabel(p.box) : "새 단어"}</span></span><span class="m"></span></summary>
       <div class="edit"><p class="extra"></p><textarea aria-label="뜻"></textarea>
       <label><input type="checkbox" class="chk"> 확인 필요</label>
       <label><input type="checkbox" class="act"> 퀴즈에 내기</label>
       <div class="row"><button class="btn save" type="button">저장</button></div></div>`;
     const t = d.querySelector(".t"); t.textContent = it.term;
-    if (it.check){ const s = document.createElement("span"); s.className = "tag"; s.textContent = "확인 필요"; t.after(s); }
-    if (it.active === false || !it.meaning){ const s = document.createElement("span"); s.className = "tag off"; s.textContent = it.meaning ? "제외" : "뜻 없음"; t.after(s); }
+    if (it.check){ const s = document.createElement("span"); s.className = "tag"; s.textContent = "확인 필요"; t.appendChild(s); }
+    if (it.active === false || !it.meaning){ const s = document.createElement("span"); s.className = "tag off"; s.textContent = it.meaning ? "제외" : "뜻 없음"; t.appendChild(s); }
     d.querySelector(".m").textContent = it.meaning || "뜻을 채워주세요";
     d.querySelector(".extra").textContent = it.extra || "";
     d.querySelector("textarea").value = it.meaning || "";
@@ -588,6 +626,26 @@ function renderWords(){
       it.check = d.querySelector(".chk").checked;
       it.active = d.querySelector(".act").checked;
       store.set("vq-vocab", vocab); renderWords();
+    };
+    box.appendChild(d);
+  });
+}
+
+function renderGrads(grads){
+  $("gradTitle").textContent = `졸업한 단어 · ${grads.length}개`;
+  $("gradEmpty").hidden = grads.length > 0;
+  const box = $("grads"); box.innerHTML = "";
+  grads.forEach(it => {
+    const d = document.createElement("details"); d.className = "word";
+    d.innerHTML = `<summary><span class="t"></span><span class="stage"></span><span class="m"></span></summary>
+      <div class="edit"><p class="extra"></p><div class="row"><button class="btn again" type="button">다시 공부하기</button></div></div>`;
+    d.querySelector(".t").textContent = it.term;
+    d.querySelector(".stage").textContent = `${dayLabel(progress[it.id].grad)} 졸업`;
+    d.querySelector(".m").textContent = it.meaning || "";
+    d.querySelector(".extra").textContent = it.extra || "";
+    d.querySelector(".again").onclick = () => {
+      progress[it.id] = Object.assign(progress[it.id], {box: 0, due: 0, day: null, grad: null});
+      store.set("vq-progress", progress); renderWords();
     };
     box.appendChild(d);
   });

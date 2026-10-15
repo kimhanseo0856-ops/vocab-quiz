@@ -41,6 +41,18 @@ header h1{flex:1;min-width:0}
 .main.idle .status,.main.idle .question,.main.idle .heard{display:none}
 .main.idle .big{padding:26px;font-size:24px;border-radius:18px}
 .page .fold>summary{display:none}
+.tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.tile{background:var(--bg);border-radius:10px;padding:10px 12px}
+.tile b{display:block;font-size:22px;font-variant-numeric:tabular-nums}
+.tile span{font-size:12px;color:var(--muted)}
+.stack{display:flex;height:14px;border-radius:7px;overflow:hidden;background:var(--bg)}
+.stack i{display:block;height:100%}
+.legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:13px;color:var(--muted)}
+.legend span::before{content:"";display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;background:var(--c)}
+.week{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;align-items:end;height:120px}
+.week div{display:grid;grid-template-rows:1fr auto auto;height:100%;text-align:center;font-size:11px;color:var(--muted);gap:2px}
+.week .bar{align-self:end;background:var(--line);border-radius:4px 4px 0 0;display:flex;flex-direction:column;justify-content:flex-end;overflow:hidden;min-height:2px}
+.week .bar i{display:block;background:var(--ok)}
 h1{font-size:22px;margin:0;font-weight:700;text-wrap:balance}
 .src{font-size:12px;color:var(--muted)}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:18px;display:grid;grid-template-columns:minmax(0,1fr);gap:12px;min-width:0}
@@ -125,6 +137,7 @@ details.panel[open]>summary{margin-bottom:10px}
       <button type="button" data-page="photo" id="menuPhoto" hidden>노트 사진 추가</button>
       <button type="button" data-page="words">단어장</button>
       <button type="button" data-page="grads">졸업한 단어</button>
+      <button type="button" data-page="stats">통계</button>
       <button type="button" data-page="settings">설정</button>
     </nav>
   </header>
@@ -201,6 +214,16 @@ details.panel[open]>summary{margin-bottom:10px}
       <p class="hint" id="gradEmpty">아직 졸업한 단어가 없어요.</p>
       <div class="words" id="grads"></div>
     </details>
+  </section>
+
+  <section class="card page" id="statsCard" hidden>
+    <div class="tiles" id="statTiles"></div>
+    <h2>단계별 단어</h2>
+    <div class="stack" id="statStack"></div>
+    <div class="legend" id="statLegend"></div>
+    <h2>최근 7일</h2>
+    <div class="week" id="statWeek"></div>
+    <p class="hint">막대 전체는 그날 답한 문제 수, 초록은 맞힌 문제예요.</p>
   </section>
 </div>
 
@@ -704,10 +727,47 @@ async function keepAwake(on){
 }
 document.addEventListener("visibilitychange", () => { if (session && document.visibilityState === "visible") keepAwake(true); });
 
+/* ---------- statistics page ---------- */
+function renderStats(){
+  const counted = reviewLog.filter(r => r.counted !== false);        // first answer of each day per word
+  const right = counted.filter(r => r.ok).length;
+  const days = new Set(reviewLog.map(r => r.day)).size;
+  $("statTiles").innerHTML = [
+    [counted.length ? Math.round(right / counted.length * 100) + "%" : "-", "정답률"],
+    [reviewLog.length, "답한 문제"],
+    [days, "공부한 날"],
+  ].map(([v, l]) => `<div class="tile"><b>${v}</b><span>${l}</span></div>`).join("");
+
+  const n = {fresh: 0, daily: 0, review: 0, grad: 0};
+  for (const it of activeItems()){
+    const p = progress[it.id];
+    if (p && p.box >= GRADUATED) n.grad++;
+    else if (p && p.box >= REVIEW) n.review++;
+    else if (p && p.seen) n.daily++;
+    else n.fresh++;
+  }
+  const parts = [["fresh", "새 단어", "var(--line)"], ["daily", "매일", "var(--listen)"], ["review", "복습", "var(--accent)"], ["grad", "졸업", "var(--ok)"]];
+  const total = Object.values(n).reduce((a, b) => a + b, 0) || 1;
+  $("statStack").innerHTML = parts.map(([k, , c]) => `<i style="width:${n[k] / total * 100}%;background:${c}"></i>`).join("");
+  $("statLegend").innerHTML = parts.map(([k, l, c]) => `<span style="--c:${c}">${l} ${n[k]}</span>`).join("");
+
+  const d = today(), week = [];
+  for (let k = 6; k >= 0; k--){
+    const rows = reviewLog.filter(r => r.day === d - k);
+    week.push({day: d - k, all: rows.length, ok: rows.filter(r => r.ok).length});
+  }
+  const max = Math.max(1, ...week.map(w => w.all));
+  const wd = "일월화수목금토";
+  $("statWeek").innerHTML = week.map(w => {
+    const label = k => wd[new Date(k * DAY).getUTCDay()];
+    return `<div><span class="bar" style="height:${w.all / max * 100}%"><i style="height:${w.all ? w.ok / w.all * 100 : 0}%"></i></span><span>${w.all || ""}</span><span>${w.day === d ? "오늘" : label(w.day)}</span></div>`;
+  }).join("");
+}
+
 /* ---------- menu and pages ----------
    The main screen holds only the start button; the rest opens from the menu as its own page.
    Pages use history entries, so the phone's back button returns to the quiz. */
-const PAGES = {photo: ["photoCard", "노트 사진 추가"], words: ["wordsCard", "단어장"], grads: ["gradsCard", "졸업한 단어"], settings: ["settingsCard", "설정"]};
+const PAGES = {photo: ["photoCard", "노트 사진 추가"], words: ["wordsCard", "단어장"], grads: ["gradsCard", "졸업한 단어"], stats: ["statsCard", "통계"], settings: ["settingsCard", "설정"]};
 function openMenu(open){ $("menu").hidden = !open; $("menuBtn").setAttribute("aria-expanded", String(open)); }
 function showPage(name, push){
   const main = !PAGES[name];
@@ -720,6 +780,7 @@ function showPage(name, push){
   $("pageTitle").textContent = main ? "출근길 단어 퀴즈" : h2 ? h2.textContent : PAGES[name][1];
   $("backBtn").hidden = main; $("menuBtn").hidden = !main || !!session;
   openMenu(false);
+  if (name === "stats") renderStats();
   if (push && !main) history.pushState({page: name}, "");
   window.scrollTo(0, 0);
 }
@@ -926,8 +987,26 @@ function leaveKakao(){
   return true;
 }
 
+/* The app shows the live page, but the phone may keep an old copy for a few minutes. On start and
+   whenever the app comes back to the front, compare APP_VERSION with the copy on the server and
+   reload once (with a fresh query string so no cache is used) if it changed. */
+const APP_VERSION = "2026-10-15.2";
+async function checkUpdate(){
+  if (session || location.protocol !== "https:") return;
+  try{
+    const t = await fetch(location.pathname + "?check=" + Date.now(), {cache: "no-store"}).then(r => r.text());
+    const m = t.match(/const APP_VERSION = "([^"]+)"/);
+    if (!m || m[1] === APP_VERSION) return;
+    if (sessionStorage.getItem("vq-tried") === m[1]) return;   // tried once already; don't loop
+    sessionStorage.setItem("vq-tried", m[1]);
+    location.replace(location.pathname + "?v=" + encodeURIComponent(m[1]) + location.hash);
+  }catch(e){}
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden) checkUpdate(); });
+
 async function init(){
   if (leaveKakao()) return;
+  checkUpdate();
   if (!Rec && !NATIVE){ $("speechWarn").hidden = false; $("typeForm").hidden = false; }
   if (NATIVE){
     $("menuPhoto").hidden = false;

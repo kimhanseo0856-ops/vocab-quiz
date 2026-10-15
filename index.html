@@ -552,7 +552,10 @@ function noteSetup(){
   return noteReady = noteReady || (async () => {
     try{
       if ((await NativeNote.requestPermissions()).display !== "granted") return false;
-      await NativeNote.createChannel({id: "quiz", name: "퀴즈 진행", description: "퀴즈 진행 상황", importance: 2, visibility: 1, vibration: false});
+      // default importance so the lock screen shows it (Android hides "silent" low-importance ones there),
+      // kept quiet with a silent sound file bundled in the APK (res/raw/quiz_silence.wav)
+      await NativeNote.deleteChannel({id: "quiz"}).catch(() => {});
+      await NativeNote.createChannel({id: "quiz_live", name: "퀴즈 진행", description: "퀴즈 진행 상황", importance: 3, visibility: 1, vibration: false, sound: "quiz_silence.wav"});
       await NativeNote.registerActionTypes({types: [{id: "QUIZ", actions: [{id: "pass", title: "패스"}, {id: "stop", title: "그만", destructive: true}]}]});
       await NativeNote.addListener("localNotificationActionPerformed", e => {
         if (e.actionId === "pass" && typedResolve) typedResolve("패스");
@@ -565,7 +568,7 @@ function noteSetup(){
 async function quizNote(body){
   if (!(await noteSetup())) return;
   try{
-    await NativeNote.schedule({notifications: [{id: NOTE_ID, title: "출근길 단어 퀴즈", body, channelId: "quiz",
+    await NativeNote.schedule({notifications: [{id: NOTE_ID, title: "출근길 단어 퀴즈", body, channelId: "quiz_live", sound: "quiz_silence.wav",
       ongoing: true, autoCancel: false, actionTypeId: "QUIZ", smallIcon: "ic_stat_quiz"}]});
   }catch(err){}
 }
@@ -1028,7 +1031,7 @@ function leaveKakao(){
 /* The app shows the live page, but the phone may keep an old copy for a few minutes. On start and
    whenever the app comes back to the front, compare APP_VERSION with the copy on the server and
    reload once (with a fresh query string so no cache is used) if it changed. */
-const APP_VERSION = "2026-10-15.4";
+const APP_VERSION = "2026-10-15.5";
 async function checkUpdate(){
   if (session || location.protocol !== "https:") return;
   try{

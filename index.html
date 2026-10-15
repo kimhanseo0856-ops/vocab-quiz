@@ -536,7 +536,42 @@ function renderToday(){
   }
   $("today").innerHTML = `<span>복습 <b>${review}</b></span><span>새 단어 <b>${fresh}</b></span><span>졸업 <b>${grad}</b></span>`;
 }
-function updateScore(){ $("score").textContent = session ? `${Math.min(session.i + 1, session.queue.length)} / ${session.queue.length} · 정답 ${session.right}` : ""; }
+function updateScore(){
+  $("score").textContent = session ? `${Math.min(session.i + 1, session.queue.length)} / ${session.queue.length} · 정답 ${session.right}` : "";
+  if (session) quizNote(`${Math.min(session.i + 1, session.queue.length)} / ${session.queue.length}번 · 정답 ${session.right}`);
+}
+
+/* ---------- lock-screen progress notification (app only) ----------
+   While a quiz runs, an ongoing quiet notification shows the progress on the lock screen and in the
+   notification shade, with 패스 / 그만 buttons. It goes away when the quiz ends. */
+const NativeNote = NATIVE ? window.Capacitor.registerPlugin("LocalNotifications") : null;
+const NOTE_ID = 7001;
+let noteReady = null;
+function noteSetup(){
+  if (!NativeNote) return Promise.resolve(false);
+  return noteReady = noteReady || (async () => {
+    try{
+      if ((await NativeNote.requestPermissions()).display !== "granted") return false;
+      await NativeNote.createChannel({id: "quiz", name: "퀴즈 진행", description: "퀴즈 진행 상황", importance: 2, visibility: 1, vibration: false});
+      await NativeNote.registerActionTypes({types: [{id: "QUIZ", actions: [{id: "pass", title: "패스"}, {id: "stop", title: "그만", destructive: true}]}]});
+      await NativeNote.addListener("localNotificationActionPerformed", e => {
+        if (e.actionId === "pass" && typedResolve) typedResolve("패스");
+        else if (e.actionId === "stop") stopSession();
+      });
+      return true;
+    }catch(err){ return false; }
+  })();
+}
+async function quizNote(body){
+  if (!(await noteSetup())) return;
+  try{
+    await NativeNote.schedule({notifications: [{id: NOTE_ID, title: "출근길 단어 퀴즈", body, channelId: "quiz",
+      ongoing: true, autoCancel: false, actionTypeId: "QUIZ", smallIcon: "ic_stat_quiz"}]});
+  }catch(err){}
+}
+function quizNoteClear(){
+  if (NativeNote) NativeNote.cancel({notifications: [{id: NOTE_ID}]}).catch(() => {});
+}
 
 /* ---------- session ---------- */
 function activeItems(){ return vocab.items.filter(i => i.active !== false && i.meaning); }
@@ -715,7 +750,7 @@ function setRunning(on){
   $("sessionCtl").hidden = !on; $("today").hidden = on;
   $("menuBtn").hidden = on;
   if (on) $("mainView").classList.remove("idle");
-  if (!on) renderToday();
+  if (!on){ renderToday(); quizNoteClear(); }
 }
 let wakeLock = null;
 async function keepAwake(on){
@@ -993,7 +1028,7 @@ function leaveKakao(){
 /* The app shows the live page, but the phone may keep an old copy for a few minutes. On start and
    whenever the app comes back to the front, compare APP_VERSION with the copy on the server and
    reload once (with a fresh query string so no cache is used) if it changed. */
-const APP_VERSION = "2026-10-15.3";
+const APP_VERSION = "2026-10-15.4";
 async function checkUpdate(){
   if (session || location.protocol !== "https:") return;
   try{
@@ -1013,6 +1048,8 @@ async function init(){
   if (!Rec && !NATIVE){ $("speechWarn").hidden = false; $("typeForm").hidden = false; }
   if (NATIVE){
     $("menuPhoto").hidden = false;
+    quizNoteClear();                 // left over if the app was closed mid-quiz
+    noteSetup();                     // ask for the notification permission now, not in the middle of a drive
     $("shootBtn").onclick = () => addPhotos(true);
     $("pickBtn").onclick = () => addPhotos(false);
     inboxCount().then(n => { if (n) $("photoMsg").textContent = `처리를 기다리는 사진: ${n}장`; });

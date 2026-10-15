@@ -729,6 +729,19 @@ $("backBtn").onclick = () => history.state && history.state.page ? history.back(
 window.addEventListener("popstate", e => showPage(e.state && e.state.page, false));
 if (history.state && history.state.page) history.replaceState(null, "");    // a reload always starts on the quiz screen
 document.addEventListener("click", e => { if (!$("menu").hidden && !e.target.closest("#menu, #menuBtn")) openMenu(false); });
+/* Phone back button (app only, needs the @capacitor/app plugin in the APK): page -> quiz screen,
+   open menu -> close it, running quiz -> keep it going in the background, otherwise leave the app. */
+if (NATIVE){
+  try{
+    const NativeApp = window.Capacitor.registerPlugin("App");
+    NativeApp.addListener("backButton", () => {
+      if ($("mainView").hidden) history.state && history.state.page ? history.back() : showPage(null);
+      else if (!$("menu").hidden) openMenu(false);
+      else if (session) NativeApp.minimizeApp();
+      else NativeApp.exitApp();
+    }).catch(() => {});
+  }catch(e){}
+}
 
 /* manual controls (testing / passenger use) */
 $("startBtn").onclick = () => session ? stopSession() : runSession();

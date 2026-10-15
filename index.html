@@ -27,11 +27,25 @@
 html,body{margin:0}
 body{background:var(--bg);color:var(--fg);font:15px/1.55 var(--f);padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
 .wrap{max-width:640px;margin:0 auto;padding-inline:16px;padding-block:18px 48px;display:grid;gap:16px}
-header{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap}
+header{position:relative;display:flex;align-items:center;gap:8px;min-height:44px}
+header h1{flex:1;min-width:0}
+.icon{border:0;background:none;color:var(--fg);font-size:22px;line-height:1;width:44px;height:44px;border-radius:10px;flex:none}
+.icon:active{background:var(--surface)}
+#backBtn{font-size:30px;margin-left:-10px}
+.menu{position:absolute;top:48px;right:0;z-index:10;display:grid;min-width:180px;padding:6px;border-radius:12px;background:var(--surface);border:1px solid var(--line);box-shadow:0 8px 24px rgba(0,0,0,.25)}
+.menu[hidden]{display:none}
+.menu button{border:0;background:none;color:var(--fg);text-align:left;padding:12px 14px;border-radius:8px;font-size:15px}
+.menu button:active{background:var(--bg)}
+.menu button[hidden]{display:none}
+.main.idle{background:none;border:0;padding:0;min-height:calc(100dvh - 140px);align-content:center}
+.main.idle .status,.main.idle .question,.main.idle .heard{display:none}
+.main.idle .big{padding:26px;font-size:24px;border-radius:18px}
+.page .fold>summary{display:none}
 h1{font-size:22px;margin:0;font-weight:700;text-wrap:balance}
 .src{font-size:12px;color:var(--muted)}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:18px;display:grid;grid-template-columns:minmax(0,1fr);gap:12px;min-width:0}
 .card>*{min-width:0}
+.card[hidden]{display:none}
 .status{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;letter-spacing:.02em}
 .pill{padding:3px 10px;border-radius:999px;background:var(--bg);color:var(--muted)}
 .pill.speaking{background:var(--accent);color:var(--accent-fg)}
@@ -73,10 +87,19 @@ h2{font-size:16px;margin:0}
 .boxes i.on{background:var(--ok)}
 .boxes i.wide{width:14px}
 .stage{font-size:12px;color:var(--muted);margin-left:6px;white-space:nowrap}
-.gradbox>summary{list-style:none;cursor:pointer}
-.gradbox>summary::-webkit-details-marker{display:none}
-.gradbox[open]>summary{margin-bottom:10px}
-.gradbox>summary h2::after{content:" ▾";color:var(--muted)}
+.fold>summary{list-style:none;cursor:pointer;display:flex;justify-content:space-between;align-items:center}
+.fold>summary::-webkit-details-marker{display:none}
+.fold>summary::after{content:"›";color:var(--muted);font-size:20px;line-height:1;transition:transform .15s}
+.fold[open]>summary::after{transform:rotate(90deg)}
+.fold[open]>summary{margin-bottom:10px}
+.fold>.hint{margin-bottom:10px}
+.today{display:flex;justify-content:center;gap:14px;font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
+.today b{color:var(--fg);font-weight:600}
+#sessionCtl{display:grid;gap:10px}
+#sessionCtl[hidden]{display:none}
+.chips{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0;font-size:12px;color:var(--muted)}
+.chips span{padding:2px 9px;border-radius:999px;border:1px solid var(--line);color:var(--fg)}
+.type[hidden]{display:none}
 .tag{font-size:11px;padding:1px 7px;border-radius:4px;background:var(--warn-soft);color:var(--warn);font-weight:600;margin-left:6px;vertical-align:1px}
 .tag.off{background:var(--bg);color:var(--muted)}
 .edit{display:grid;gap:8px;padding:0 12px 12px}
@@ -94,31 +117,42 @@ details.panel[open]>summary{margin-bottom:10px}
 <body>
 <div class="wrap">
   <header>
-    <h1>출근길 단어 퀴즈</h1>
-    <span class="src" id="src"></span>
+    <button class="icon" id="backBtn" type="button" aria-label="뒤로" hidden>‹</button>
+    <h1 id="pageTitle">출근길 단어 퀴즈</h1>
+    <span class="src" id="src" hidden></span>
+    <button class="icon" id="menuBtn" type="button" aria-label="메뉴" aria-expanded="false">☰</button>
+    <nav class="menu" id="menu" hidden>
+      <button type="button" data-page="photo" id="menuPhoto" hidden>노트 사진 추가</button>
+      <button type="button" data-page="words">단어장</button>
+      <button type="button" data-page="grads">졸업한 단어</button>
+      <button type="button" data-page="settings">설정</button>
+    </nav>
   </header>
 
-  <section class="card" aria-live="polite">
+  <section class="card main idle" id="mainView" aria-live="polite">
     <div class="status"><span class="pill" id="pill">대기 중</span><span class="dot"></span><span class="count" id="score"></span></div>
-    <div class="question" id="question">시작을 누르면 문제를 읽어드려요. 삐 소리가 나면 답을 말해주세요.</div>
+    <div class="question" id="question">준비됐어요</div>
     <div class="heard" id="heard"></div>
     <div class="feedback" id="feedback"></div>
     <button class="big" id="startBtn">퀴즈 시작</button>
-    <div class="row">
-      <button class="btn" id="repeatBtn" disabled>다시 듣기</button>
-      <button class="btn" id="passBtn" disabled>패스</button>
+    <div class="today" id="today"></div>
+    <div id="sessionCtl" hidden>
+      <div class="row">
+        <button class="btn" id="repeatBtn" disabled>다시 듣기</button>
+        <button class="btn" id="passBtn" disabled>패스</button>
+      </div>
+      <p class="chips">말로 하기 <span>힌트</span><span>다시 말해줘</span><span>패스</span><span>그만</span></p>
     </div>
-    <form class="type" id="typeForm">
-      <input id="typeInput" autocomplete="off" placeholder="말 대신 입력해서 답하기 (테스트용)">
+    <form class="type" id="typeForm" hidden>
+      <input id="typeInput" autocomplete="off" placeholder="말 대신 입력해서 답하기">
       <button class="btn" type="submit">답하기</button>
     </form>
-    <p class="hint">음성 명령: <b>패스</b>(모르겠어), <b>다시 말해줘</b>(못 들었어), <b>힌트</b>, <b>그만</b>. 8초 동안 말이 없으면 정답을 알려주고 넘어가요.</p>
     <div class="warn" id="speechWarn" hidden>이 브라우저는 음성 인식을 지원하지 않아요. 안드로이드 크롬에서 열어주세요. 지금은 입력창으로 답할 수 있어요.</div>
   </section>
 
-  <section class="card" id="photoCard" hidden>
+  <section class="card page" id="photoCard" hidden>
     <h2>노트 사진 추가</h2>
-    <p class="hint">찍은 사진은 휴대폰의 <b>Documents/VocabQuiz/inbox</b> 폴더에 저장돼요. 집 PC가 켜지면 이 폴더가 PC로 옮겨지고, 글씨를 인식해서 단어장에 추가해요.</p>
+    <p class="hint">찍은 노트는 집 PC가 읽어서 단어장에 넣어줘요.</p>
     <div class="row">
       <button class="btn" id="shootBtn" type="button">노트 촬영</button>
       <button class="btn" id="pickBtn" type="button">앨범에서 고르기</button>
@@ -126,9 +160,9 @@ details.panel[open]>summary{margin-bottom:10px}
     <p class="hint" id="photoMsg"></p>
   </section>
 
-  <section class="card">
-    <details class="panel">
-      <summary>설정</summary>
+  <section class="card page" id="settingsCard" hidden>
+    <details class="panel fold">
+      <summary><h2>설정</h2></summary>
       <div class="settings">
         <label>한 번에 풀 문제 수 <select id="setCount"><option>10</option><option>20</option><option selected>30</option><option>40</option><option>60</option><option value="999">전부</option></select></label>
         <label>답 알려준 뒤 쉬는 시간 <select id="setGap"><option value="1.5">짧게 (1.5초)</option><option value="2.5" selected>보통 (2.5초)</option><option value="4">길게 (4초)</option></select></label>
@@ -153,14 +187,16 @@ details.panel[open]>summary{margin-bottom:10px}
     </details>
   </section>
 
-  <section class="card">
-    <h2 id="wordsTitle">단어장</h2>
-    <p class="hint">5일 연속으로 맞히면 복습 단계로 넘어가요. 복습 간격은 기억 모델(FSRS)이 "잊어버릴 것 같은 날"을 예측해서 정하고, 90일 뒤에도 기억할 거라고 예측되면 졸업해요. 중간에 틀리면 매일 단계부터 다시 시작해요. 하루에 여러 번 맞혀도 하루로 쳐요. 단어를 누르면 뜻을 고칠 수 있지만, 자동 업데이트를 연결했다면 Gist의 단어장을 고쳐야 다음에도 유지돼요.</p>
-    <div class="words" id="words"></div>
+  <section class="card page" id="wordsCard" hidden>
+    <details class="fold">
+      <summary><h2 id="wordsTitle">단어장</h2></summary>
+      <p class="hint">5일 연속 맞히면 복습 단계로 넘어가고, 다음 출제일은 기억 모델(FSRS)이 정해요. 90일 뒤에도 기억할 것 같으면 졸업해요. 단어를 누르면 뜻을 채우거나 고칠 수 있고, 고친 내용은 이 폰에 계속 남아요.</p>
+      <div class="words" id="words"></div>
+    </details>
   </section>
 
-  <section class="card">
-    <details class="gradbox">
+  <section class="card page" id="gradsCard" hidden>
+    <details class="fold">
       <summary><h2 id="gradTitle">졸업한 단어</h2></summary>
       <p class="hint" id="gradEmpty">아직 졸업한 단어가 없어요.</p>
       <div class="words" id="grads"></div>
@@ -207,6 +243,7 @@ const stageLabel = p => p.box >= GRADUATED ? "졸업" : p.box >= REVIEW ? `복�
 
 let vocab = null;                                 // {title, items}
 let reviewLog = store.get("vq-log", []);         // every answer: {id, at, day, ok, type, ms, hints, repeats, pass, counted, box, since}
+let edits = store.get("vq-edits", {});           // id -> {meaning, check, active, at}
 let progress = store.get("vq-progress", {});      // id -> {box, due, seen, right, day (last counted), grad (day)}
 let settings = Object.assign({count:30, rate:1, gap:2.5, t1:true, t2:true, t3:true}, store.get("vq-settings", {}));
 
@@ -333,7 +370,7 @@ function nativeListen(timeout, res){
   (async () => {
     if (!await nativeMic()){
       $("speechWarn").textContent = "마이크 권한이 없어서 입력창으로 답하는 모드예요. 휴대폰 설정 → 앱 → 출근길 단어 퀴즈 → 권한에서 마이크를 허용해주세요.";
-      $("speechWarn").hidden = false;
+      $("speechWarn").hidden = false; $("typeForm").hidden = false;
       clearTimeout(t); t = setTimeout(fin, 60000);
       return;
     }
@@ -390,7 +427,7 @@ function listen(timeout = 8000){
       if (ev.error === "not-allowed" || ev.error === "service-not-allowed"){
         micDenied = true; rec = null;
         $("speechWarn").textContent = "마이크를 쓸 수 없어서 입력창으로 답하는 모드로 바꿨어요. 음성으로 답하려면 주소창 왼쪽 아이콘에서 마이크를 허용하고 새로고침해주세요.";
-        $("speechWarn").hidden = false;
+        $("speechWarn").hidden = false; $("typeForm").hidden = false;
         clearTimeout(t); t = setTimeout(fin, 60000);   // keep waiting for a typed answer
         return;
       }
@@ -404,7 +441,7 @@ function listen(timeout = 8000){
 /* ---------- study record backup ----------
    In the app the log and progress are written to Documents/VocabQuiz/logs after every quiz, so they
    survive a reinstall and reach the home PC with the photos. In a browser the button downloads them. */
-const backupData = () => JSON.stringify({savedAt: new Date().toISOString(), progress, log: reviewLog});
+const backupData = () => JSON.stringify({savedAt: new Date().toISOString(), progress, log: reviewLog, edits});
 async function saveBackup(){
   if (!NATIVE) return false;
   await NativeFS.writeFile({path: "VocabQuiz/logs/study_record.json", data: backupData(), directory: "DOCUMENTS", encoding: "utf8", recursive: true});
@@ -458,7 +495,24 @@ async function addPhotos(fromCamera){
 
 /* ---------- UI helpers ---------- */
 function setPill(kind, text){ const p = $("pill"); p.className = "pill " + (kind || ""); p.textContent = text; }
-function showFeedback(kind, text){ const f = $("feedback"); f.className = "feedback " + kind; f.textContent = text; }
+let feedbackTimer = null;
+function showFeedback(kind, text, fade){       // fade: status notes that disappear after a few seconds
+  const f = $("feedback"); f.className = "feedback " + kind; f.textContent = text;
+  clearTimeout(feedbackTimer);
+  if (fade) feedbackTimer = setTimeout(() => { if (f.textContent === text) f.className = "feedback"; }, 4000);
+}
+/* one line under the start button: what today's quiz holds */
+function renderToday(){
+  if (!vocab) return;
+  const d = today(); let review = 0, fresh = 0, grad = 0;
+  for (const it of activeItems()){
+    const p = progress[it.id];
+    if (p && p.box >= GRADUATED) grad++;
+    else if (!p || !p.seen) fresh++;
+    else if (p.due <= d) review++;
+  }
+  $("today").innerHTML = `<span>복습 <b>${review}</b></span><span>새 단어 <b>${fresh}</b></span><span>졸업 <b>${grad}</b></span>`;
+}
 function updateScore(){ $("score").textContent = session ? `${Math.min(session.i + 1, session.queue.length)} / ${session.queue.length} · 정답 ${session.right}` : ""; }
 
 /* ---------- session ---------- */
@@ -635,6 +689,10 @@ function setRunning(on){
   $("startBtn").textContent = on ? "그만하기" : "퀴즈 시작";
   $("startBtn").classList.toggle("stop", on);
   $("repeatBtn").disabled = $("passBtn").disabled = !on;
+  $("sessionCtl").hidden = !on; $("today").hidden = on;
+  $("menuBtn").hidden = on;
+  if (on) $("mainView").classList.remove("idle");
+  if (!on) renderToday();
 }
 let wakeLock = null;
 async function keepAwake(on){
@@ -645,6 +703,32 @@ async function keepAwake(on){
   }catch(e){}
 }
 document.addEventListener("visibilitychange", () => { if (session && document.visibilityState === "visible") keepAwake(true); });
+
+/* ---------- menu and pages ----------
+   The main screen holds only the start button; the rest opens from the menu as its own page.
+   Pages use history entries, so the phone's back button returns to the quiz. */
+const PAGES = {photo: ["photoCard", "노트 사진 추가"], words: ["wordsCard", "단어장"], grads: ["gradsCard", "졸업한 단어"], settings: ["settingsCard", "설정"]};
+function openMenu(open){ $("menu").hidden = !open; $("menuBtn").setAttribute("aria-expanded", String(open)); }
+function showPage(name, push){
+  const main = !PAGES[name];
+  $("mainView").hidden = !main;
+  for (const [k, [id]] of Object.entries(PAGES)){
+    const el = $(id); el.hidden = k !== name;
+    if (k === name){ const d = el.querySelector("details"); if (d) d.open = true; }
+  }
+  const h2 = main ? null : $(PAGES[name][0]).querySelector("summary h2");   // e.g. "단어장 · 71개 공부 중"
+  $("pageTitle").textContent = main ? "출근길 단어 퀴즈" : h2 ? h2.textContent : PAGES[name][1];
+  $("backBtn").hidden = main; $("menuBtn").hidden = !main || !!session;
+  openMenu(false);
+  if (push && !main) history.pushState({page: name}, "");
+  window.scrollTo(0, 0);
+}
+$("menuBtn").onclick = () => openMenu($("menu").hidden);
+$("menu").onclick = e => { const b = e.target.closest("button[data-page]"); if (b) showPage(b.dataset.page, true); };
+$("backBtn").onclick = () => history.state && history.state.page ? history.back() : showPage(null);
+window.addEventListener("popstate", e => showPage(e.state && e.state.page, false));
+if (history.state && history.state.page) history.replaceState(null, "");    // a reload always starts on the quiz screen
+document.addEventListener("click", e => { if (!$("menu").hidden && !e.target.closest("#menu, #menuBtn")) openMenu(false); });
 
 /* manual controls (testing / passenger use) */
 $("startBtn").onclick = () => session ? stopSession() : runSession();
@@ -676,10 +760,13 @@ function renderWords(){
     d.querySelector(".chk").checked = !!it.check;
     d.querySelector(".act").checked = it.active !== false;
     d.querySelector(".save").onclick = () => {
-      it.meaning = d.querySelector("textarea").value.trim();
-      it.check = d.querySelector(".chk").checked;
-      it.active = d.querySelector(".act").checked;
-      store.set("vq-vocab", vocab); renderWords();
+      const meaning = d.querySelector("textarea").value.trim();
+      const filled = meaning && meaning !== (it.meaning || ""), wasEmpty = !it.meaning;
+      it.meaning = meaning;
+      it.check = filled ? false : d.querySelector(".chk").checked;   // writing a meaning clears "확인 필요"
+      it.active = (filled && wasEmpty) || d.querySelector(".act").checked;   // a word that just got its meaning joins the quiz
+      edits[it.id] = {meaning: it.meaning, check: it.check, active: it.active, at: new Date().toISOString()};
+      store.set("vq-edits", edits); store.set("vq-vocab", vocab); renderWords(); renderToday();
     };
     box.appendChild(d);
   });
@@ -737,7 +824,16 @@ function bindSettings(){
     $("resetBtn").textContent = "학습 기록 초기화"; $("settingsMsg").textContent = "학습 기록을 지웠어요."; renderWords();
   };
 }
-function setVocab(v){ vocab = v; $("src").textContent = v.title || ""; renderWords(); }
+/* Edits made on the phone are kept apart and laid over every list that arrives from the gist,
+   so the next sync doesn't wipe them. They also travel in the backup file for the home PC. */
+function applyEdits(v){
+  for (const it of v.items || []){
+    const e = edits[it.id];
+    if (e) Object.assign(it, {meaning: e.meaning, check: e.check, active: e.active});
+  }
+  return v;
+}
+function setVocab(v){ vocab = applyEdits(v); $("src").textContent = v.title || ""; renderWords(); renderToday(); }
 
 /* "#import=<base64url of raw-deflated vocab JSON>" links load a vocab without uploading it anywhere:
    the part after # never leaves the phone. */
@@ -751,7 +847,7 @@ async function importFromHash(){
     const v = JSON.parse(await new Response(stream).text());
     if (!Array.isArray(v.items)) throw new Error("items 목록이 없어요");
     store.set("vq-vocab", v); setVocab(v);
-    showFeedback("ok", `단어장을 가져왔어요. 단어 ${v.items.length}개 중 ${activeItems().length}개를 퀴즈에 내요.`);
+    showFeedback("ok", `단어장을 가져왔어요. 단어 ${v.items.length}개 중 ${activeItems().length}개를 퀴즈에 내요.`, true);
     return true;
   }catch(e){
     showFeedback("bad", "링크에서 단어장을 읽지 못했어요. 링크가 중간에 잘리지 않았는지 확인해주세요.");
@@ -779,11 +875,11 @@ async function syncSource(quiet){
     const v = await fetchSource(src.url);
     store.set("vq-vocab", v); setVocab(v);
     src.updatedAt = Date.now(); store.set(SOURCE_KEY, src);
-    if (!quiet) showFeedback("ok", `최신 단어장을 받았어요. ${activeItems().length}개를 퀴즈에 내요.`);
+    if (!quiet) showFeedback("ok", `최신 단어장을 받았어요. ${activeItems().length}개를 퀴즈에 내요.`, true);
   }catch(e){
     const saved = store.get("vq-vocab", null);
     if (saved) setVocab(saved);
-    showFeedback("info", "인터넷 연결이 없어서 마지막으로 받은 단어장으로 진행해요.");
+    showFeedback("info", "인터넷 연결이 없어서 마지막으로 받은 단어장으로 진행해요.", true);
   }
   renderSource();
   return true;
@@ -795,7 +891,7 @@ async function connectSource(url){
     const v = await fetchSource(url);
     store.set(SOURCE_KEY, {url, updatedAt: Date.now()});
     store.set("vq-vocab", v); setVocab(v);
-    showFeedback("ok", `자동 업데이트를 연결했어요. 앞으로 열 때마다 최신 단어장을 받아와요. 지금 ${activeItems().length}개를 퀴즈에 내요.`);
+    showFeedback("ok", `자동 업데이트를 연결했어요. 앞으로 열 때마다 최신 단어장을 받아와요. 지금 ${activeItems().length}개를 퀴즈에 내요.`, true);
   }catch(e){
     showFeedback("bad", `Gist에서 단어장을 받지 못했어요 (${e.message}). 인터넷 연결과 Gist 주소를 확인해주세요.`);
   }
@@ -819,9 +915,9 @@ function leaveKakao(){
 
 async function init(){
   if (leaveKakao()) return;
-  if (!Rec && !NATIVE) $("speechWarn").hidden = false;
+  if (!Rec && !NATIVE){ $("speechWarn").hidden = false; $("typeForm").hidden = false; }
   if (NATIVE){
-    $("photoCard").hidden = false;
+    $("menuPhoto").hidden = false;
     $("shootBtn").onclick = () => addPhotos(true);
     $("pickBtn").onclick = () => addPhotos(false);
     inboxCount().then(n => { if (n) $("photoMsg").textContent = `처리를 기다리는 사진: ${n}장`; });

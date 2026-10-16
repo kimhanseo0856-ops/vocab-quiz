@@ -122,6 +122,8 @@ h2{font-size:16px;margin:0}
 .tag{font-size:11px;padding:1px 7px;border-radius:4px;background:var(--warn-soft);color:var(--warn);font-weight:600;margin-left:6px;vertical-align:1px}
 .tag.off{background:var(--bg);color:var(--muted)}
 .edit{display:grid;gap:8px;padding:0 12px 12px}
+.edit .fld{display:grid;grid-template-columns:auto 1fr;gap:8px;align-items:center;font-size:13px}
+.edit .termIn{font:inherit;font-size:15px;font-weight:600;padding:7px 10px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--fg);min-width:0}
 .edit textarea{font:inherit;font-size:14px;width:100%;min-height:64px;padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--fg);resize:vertical}
 .edit label{display:flex;gap:6px;align-items:center;font-size:13px}
 .btn.del{color:var(--bad);margin-left:auto}
@@ -948,7 +950,7 @@ function renderWords(){
     const p = progress[it.id] || {box:0};
     const d = document.createElement("details"); d.className = "word";
     d.innerHTML = `<summary><span class="t"></span><span class="boxes">${[1,2,3,4,5].map(i => `<i class="${i <= p.box ? "on" : ""}"></i>`).join("")}<span class="stage">${p.seen ? stageLabel(p) : "새 단어"}</span></span><span class="m"></span></summary>
-      <div class="edit"><p class="extra"></p><textarea aria-label="뜻"></textarea>
+      <div class="edit"><p class="extra"></p><label class="fld">단어 <input class="termIn" aria-label="단어"></label><textarea aria-label="뜻"></textarea>
       <label><input type="checkbox" class="chk"> 확인 필요</label>
       <label><input type="checkbox" class="act"> 퀴즈에 내기</label>
       <div class="row"><button class="btn save" type="button">저장</button><button class="btn del" type="button">단어 삭제</button></div></div>`;
@@ -958,6 +960,7 @@ function renderWords(){
     d.querySelector(".m").textContent = it.meaning || "뜻을 채워주세요";
     d.querySelector(".extra").textContent = it.extra || "";
     d.querySelector("textarea").value = it.meaning || "";
+    d.querySelector(".termIn").value = it.term;
     d.querySelector(".chk").checked = !!it.check;
     d.querySelector(".act").checked = it.active !== false;
     const del = d.querySelector(".del");
@@ -975,11 +978,17 @@ function renderWords(){
     };
     d.querySelector(".save").onclick = () => {
       const meaning = d.querySelector("textarea").value.trim();
+      const term = d.querySelector(".termIn").value.trim();
+      if (term && term !== it.term){                 // fix a misread word: the old spelling stays as an alias
+        if (it.say === it.term) it.say = term;
+        it.aliases = [...new Set([term, ...(it.aliases || [])])];
+        it.term = term;
+      }
       const filled = meaning && meaning !== (it.meaning || ""), wasEmpty = !it.meaning;
       it.meaning = meaning;
       it.check = filled ? false : d.querySelector(".chk").checked;   // writing a meaning clears "확인 필요"
       it.active = (filled && wasEmpty) || d.querySelector(".act").checked;   // a word that just got its meaning joins the quiz
-      edits[it.id] = {meaning: it.meaning, check: it.check, active: it.active, at: new Date().toISOString()};
+      edits[it.id] = {term: it.term, say: it.say, aliases: it.aliases, meaning: it.meaning, check: it.check, active: it.active, at: new Date().toISOString()};
       store.set("vq-edits", edits); store.set("vq-vocab", vocab); renderWords(); renderToday();
     };
     box.appendChild(d);
@@ -1049,7 +1058,8 @@ function applyEdits(v){
   v.items = (v.items || []).filter(it => !(edits[it.id] && edits[it.id].deleted));   // deleted on this phone
   for (const it of v.items){
     const e = edits[it.id];
-    if (e) Object.assign(it, {meaning: e.meaning, check: e.check, active: e.active});
+    if (e) Object.assign(it, {meaning: e.meaning, check: e.check, active: e.active},
+                         e.term ? {term: e.term, say: e.say || e.term, aliases: e.aliases || it.aliases} : {});
   }
   return v;
 }
@@ -1136,7 +1146,7 @@ function leaveKakao(){
 /* The app shows the live page, but the phone may keep an old copy for a few minutes. On start and
    whenever the app comes back to the front, compare APP_VERSION with the copy on the server and
    reload once (with a fresh query string so no cache is used) if it changed. */
-const APP_VERSION = "2026-10-16.2";
+const APP_VERSION = "2026-10-16.3";
 async function checkUpdate(){
   if (session || location.protocol !== "https:") return;
   try{
